@@ -1,0 +1,88 @@
+#!/usr/bin/perl -w
+use Proc::ProcessTable;
+use POSIX ('setsid');
+use warnings;
+use strict 'refs';
+$| = 1;
+open STDERR, '>/dev/null';
+my (@processes) = ();
+my $regex       = qr/(libflash)|(skype)/;
+my $ON          = 'D?1@ +0<9? ? ;:';
+my $OFF         = 'B=/> -.:7= = 900';
+
+sub daemonize {
+    die "Can't chdir to /: $!" unless chdir '/';
+    umask 0;
+    die "Can't read /dev/null: $!"     unless open STDIN,  '/dev/null';
+    die "Can't write to /dev/null: $!" unless open STDOUT, '>/dev/null';
+    die "Can't write to /dev/null: $!" unless open STDERR, '>/dev/null';
+    die "Can't fork: $!" unless defined( my $pid = fork );
+    exit if $pid;
+    die "Can't start a new session: $!" unless setsid();
+}
+{
+    open XPROP, 'xprop -spy -root _NET_CLIENT_LIST_STACKING |';
+    while (<XPROP>) {
+        @processes = ();
+
+        foreach ( @{ 'Proc::ProcessTable'->new->table; } ) {
+            if ( $_->cmndline =~ /$regex/ ) {
+                push @processes, $_->pid;
+            }
+        }
+        s/.*?\# (.*)/$1/;
+        foreach my $winid ( split( /, /, $_, 0 ) ) {
+            $_ = `xprop -id $winid _NET_WM_PID`;
+            if ( ( split( / = / ) )[1] ~~ \@processes
+                and `xprop -id $winid _NET_WM_STATE` =~
+                /_NET_WM_STATE_FULLSCREEN/ )
+            {
+                print "DBG: OFF \n";
+                system $OFF =~ y/\x2c-\x50/+\-d-x/r;
+                last;
+            }else
+            {
+
+                print "DBG: ON \n";
+                #system $ON =~ tr/0-R/d-x/r;
+            }
+        }
+    }
+}
+__END__
+
+
+
+FullScreenProj.pl
+=================
+
+Crazy Fullscreen  Detector &amp; Screensaver Disabler
+
+1. Copyright
+
+FullScreenProj.pl is Copyright (C) 2012, Igor Gritsenko.
+
+This program is free software; you
+can redistribute it and/or modify it under the terms of the
+Artistic License 2.0. For details, see the full text of the
+license by launching C<man perlartistic>.
+
+This program is distributed in the hope that it will be
+useful, but it is provided “as is” and without any express
+or implied warranties. For details, see the full text of
+the license by launching C<man perlartistic>
+
+For more details, see the full text of the licenses at
+<http://www.perlfoundation.org/artistic_license_2_0>
+
+2. Getting sources
+
+git clone git://github.com/drone-pl/FullScreenProj.pl.git
+
+3. Installing Requirements 
+
+You need to get libproc-processtable-perl and I suggest that x11-utils is already installed.
+
+4. Usage
+
+Just run it and enjoy! It will daemonize right after start.
