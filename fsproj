@@ -86,3 +86,7 @@ You need to get libproc-processtable-perl and I suggest that x11-utils is alread
 4. Usage
 
 Just run it and enjoy! It will daemonize right after start.
+
+5. TODO
+
+Fix f**kin' loops!
