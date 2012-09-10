@@ -4,6 +4,7 @@ FullScreenProj.pl
 Crazy Fullscreen  Detector &amp; Screensaver Disabler
 
 ##1. Copyright
+
 FullScreenProj.pl is Copyright (C) 2012, Igor Gritsenko.
 
 This program is free software; you
@@ -20,10 +21,17 @@ For more details, see the full text of the licenses at
 <http://www.perlfoundation.org/artistic_license_2_0>
 
 ##2. Getting sources
+
 git clone git://github.com/drone-pl/FullScreenProj.pl.git
 
 ##3. Installing Requirements 
+
 You need to get libproc-processtable-perl and I suggest that x11-utils is already installed.
 
 ##4. Usage
+
 Just run it and enjoy! It will daemonize right after start.
+
+##5. TODO
+
+Get rid of weird behaviour.
