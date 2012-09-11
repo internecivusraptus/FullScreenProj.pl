@@ -37,6 +37,6 @@ while (<XPROP>) {
         system $OFF =~ y/\x2c-\x50/+\-d-x/r;
     }
     else {
-        system $ON =~ tr/0-R/d-x/;
+        system $ON =~ tr/0-R/d-x/r;
     }
 }
