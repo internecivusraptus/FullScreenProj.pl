@@ -3,11 +3,10 @@ use Proc::ProcessTable;
 use POSIX ('setsid');
 use warnings;
 use strict 'refs';
-$| = 1;
 my (@processes) = ();
-my $regex       = qr/(libflash)/;
-my $ON          = 'D?1@ +0<9? ? ;:';
-my $OFF         = 'B=/> -.:7= = 900';
+my $regex       = qr/(libflash)|(vlc)/;
+my $ON          = 'xset +dpms';
+my $OFF         = 'xset -dpms';
 
 sub daemonize {
     die "Can't chdir to /: $!" unless chdir '/';
@@ -19,6 +18,7 @@ sub daemonize {
     exit if $pid;
     die "Can't start a new session: $!" unless setsid();
 }
+
 &daemonize;
 open XPROP, 'xprop -spy -root _NET_ACTIVE_WINDOW |';
 while (<XPROP>) {
@@ -34,9 +34,9 @@ while (<XPROP>) {
     if ( ( qx#xprop -id $winid _NET_WM_PID# =~ s/[^\d]+//r ) ~~ @processes
         and `xprop -id $winid _NET_WM_STATE` =~ /_NET_WM_STATE_FULLSCREEN/ )
     {
-        system $OFF =~ y/\x2c-\x50/+\-d-x/r;
+        system $OFF;
     }
     else {
-        system $ON =~ tr/0-R/d-x/r;
+        system $ON;
     }
 }
