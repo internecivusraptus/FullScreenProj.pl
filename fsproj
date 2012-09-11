@@ -34,9 +34,9 @@ while (<XPROP>) {
     if ( ( qx#xprop -id $winid _NET_WM_PID# =~ s/[^\d]+//r ) ~~ @processes
         and `xprop -id $winid _NET_WM_STATE` =~ /_NET_WM_STATE_FULLSCREEN/ )
     {
-        system $OFF =~ y/\x2c-\x50/+\-d-x/ r;
+        system $OFF =~ y/\x2c-\x50/+\-d-x/r;
     }
     else {
-        system $ON =~ tr/0-R/d-x/ r;
+        system $ON =~ tr/0-R/d-x/;
     }
 }
