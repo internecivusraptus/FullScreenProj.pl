@@ -34,4 +34,5 @@ Just run it and enjoy! It will daemonize right after start.
 
 ##5. TODO
 
-Get rid of weird behaviour.
+~Get rid of weird behaviour.~
+Add Russian README.
