@@ -1,7 +1,7 @@
 FullScreenProj.pl
 =================
 
-Crazy Fullscreen  Detector &amp; Screensaver Disabler
+Очумелый определятор полноэкранного режима и выключатель заставки.
 
 ##1. Copyright
 
@@ -20,19 +20,18 @@ the license by launching `man perlartistic`
 For more details, see the full text of the licenses at
 <http://www.perlfoundation.org/artistic_license_2_0>
 
-##2. Getting sources
+##2. Получение исходников
 
 git clone git://github.com/drone-pl/FullScreenProj.pl.git
 
-##3. Installing Requirements 
+##3. Зависимости для установки.
 
-You need to get libproc-processtable-perl and I suggest that x11-utils is already installed.
+Необходимы libproc-processtable-perl, libnet-dbus-perl и я предполагаю, что x11-utils и x11-xserver-utils уже стоят.
 
-##4. Usage
+##4. Использование
 
-Just run it and enjoy! It will daemonize right after start.
+Просто запустите и наслаждайтесь! Для автоматизации положите скрипт в папку автозапуска, например, ~/.kde/Autostart
 
 ##5. TODO
 
-_Get rid of weird behaviour._
-Add Russian README.
+Добавить больше TODO.

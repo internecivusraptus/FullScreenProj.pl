@@ -26,13 +26,12 @@ git clone git://github.com/drone-pl/FullScreenProj.pl.git
 
 ##3. Installing Requirements 
 
-You need to get libproc-processtable-perl and I suggest that x11-utils is already installed.
+You need to get libproc-processtable-perl libnet-dbus-pelr and I suggest that x11-utils & x11-xserver-utils is already installed.
 
 ##4. Usage
 
-Just run it and enjoy! It will daemonize right after start.
+Just run it and enjoy! It will daemonize right after start. For automation, add script to autostart folder, e.g. ~/.kde/Autostart.
 
 ##5. TODO
 
-_Get rid of weird behaviour._
-Add Russian README.
+Add more TODO;
