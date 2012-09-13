@@ -52,7 +52,9 @@ sub daemonize {
     die "Can't start a new session: $!" unless setsid();
 
     foreach ( @{ 'Proc::ProcessTable'->new->table; } ) {
-        die "Another instance is running" unless $_->cmndline =~ /perl.*fsproj/;
+        if (($_->cmndline =~ /perl.*fsproj/) and ($_->pid != $$)){
+            die 'Another instance is running' ;
+        }
     }
 
 }
