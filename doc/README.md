@@ -34,4 +34,7 @@ Just run it and enjoy! It will daemonize right after start. For automation, add 
 
 ##5. TODO
 
-Add more TODO;
+Add ability to configure application through GUI and config files.
+Write man pages.
+Add command-line options.
+Create some artwork.
