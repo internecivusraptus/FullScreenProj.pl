@@ -1,0 +1,159 @@
+#!/usr/bin/perl -w
+package FSProj;
+use Wx;
+use Net::DBus;
+use Proc::ProcessTable;
+use POSIX ('setsid');
+use warnings;
+use strict 'refs';
+use threads;
+use threads::shared;
+use Thread::Queue;
+use File::HomeDir;
+my $home     = &home();
+my $conffile = "$home/.config/FullscreenProj.pl/fsproj.conf";
+my ( $regex, $command, $timeout, @processes );
+my $ON  = 'xset +dpms';
+my $OFF = 'xset -dpms';
+my $TQ  = Thread::Queue->new;
+my $TGQ = Thread::Queue->new;
+
+sub readconf {
+    if ( -e $conffile ) {
+        undef $/;
+        open CONFIG, $conffile;
+        my $config = <CONFIG>;
+        eval $config;
+        close CONFIG;
+        $/ = chr(10);
+        undef $config;
+        $TGQ->enqueue(1) if $switch_state;
+    }
+    else {
+        $regex        = qr/(libflash)|(vlc)|(mplayer)/;
+        $timeout      = 50;
+        $switch_state = 1;
+        &writeconf;
+    }
+}
+
+sub writeconf {
+    mkdir $conffile =~ s/fsproj.conf//r;
+    open CONFIG, ">", $conffile;
+    print CONFIG '$regex = ' . "\"" 
+      . $regex . "\";\n"
+      . '$timeout = '
+      . $timeout . ";\n"
+      . '$switch_state = '
+      . $switch_state . ";\n";
+    close CONFIG;
+
+}
+
+sub ScreenSaver {
+    foreach ( @{ 'Proc::ProcessTable'->new->table; } ) {
+        if ( $_->cmndline =~ /xscreensaver/ ) {
+            $command = qq(system "xscreensaver-command -deactivate");
+        }
+
+        elsif ( $_->cmndline =~ /kscreensaver/ ) {
+            $command =
+qq(Net::DBus->session->get_service("org.freedesktop.ScreenSaver")->get_object('/ScreenSaver')->SimulateUserActivity());
+        }
+
+        elsif ( $_->cmndline =~ /gnome-screensaver/ ) {
+            $command =
+qq(Net::DBus->session->get_service("org.gnome.ScreenSaver")->get_object('/')->SimulateUserActivity());
+        }
+    }
+    return sub {
+        while (1) {
+            if ( $TQ->pending() ) {
+                eval $command;
+                if ($@) { warn $@; }
+            }
+            sleep $timeout;
+        }
+      }
+
+}
+
+sub daemonize {
+    die "Can't chdir to /: $!" unless chdir '/';
+    umask 0;
+    die "Can't read /dev/null: $!"     unless open STDIN,  '/dev/null';
+    die "Can't write to /dev/null: $!" unless open STDOUT, '>/dev/null';
+    die "Can't write to /dev/null: $!" unless open STDERR, '>/dev/null';
+    die "Can't fork: $!" unless defined( my $pid = fork );
+    exit if $pid;
+    die "Can't start a new session: $!" unless setsid();
+    sleep 1;
+
+    foreach ( @{ 'Proc::ProcessTable'->new->table; } ) {
+        if ( ( $_->cmndline =~ /perl.*fsproj/ ) and ( $_->pid != $$ ) ) {
+            die 'Another instance is running';
+        }
+    }
+
+}
+sub main{
+#&daemonize;
+&readconf;
+threads->create(&ScreenSaver)->detach;
+threads->create( MyApp->new()->MainLoop )->detach;
+open XPROP, 'xprop -spy -root _NET_ACTIVE_WINDOW |';
+while (<XPROP>) {
+    if ( $TGQ->pending() ) {
+        my $winid = s/.*?\# (.*)/$1/r;
+        chomp $winid;
+        @processes = ();
+        foreach ( @{ 'Proc::ProcessTable'->new->table; } ) {
+            if ( $_->cmndline =~ /$regex/ ) {
+                push @processes, $_->pid;
+            }
+        }
+
+        if ( ( qx#xprop -id $winid _NET_WM_PID# =~ s/[^\d]+//r ) ~~ @processes
+            and `xprop -id $winid _NET_WM_STATE` =~ /_NET_WM_STATE_FULLSCREEN/ )
+        {
+            $TQ->enqueue(1);
+            system $OFF;
+        }
+        else {
+            system $ON;
+            while ( $TQ->pending() ) { $TQ->dequeue() }
+        }
+
+        }
+    }
+}
+&FSProj::main;
+package MyApp;
+
+use Wx;
+use base 'Wx::App';
+
+sub OnInit {
+    my $state; #= $TGQ->pending();
+    my $self  = shift;
+    my $tbi   = Wx::TaskBarIcon->new();
+    my $tip   = $state ? "Enabled" : "Disabled";
+    my $tbicon = Wx::Icon->new();
+    $tbicon->LoadFile("$tip.xpm", &Wx::wxBITMAP_TYPE_XPM);
+    $tbi->SetIcon( $tbicon, $tip );
+    $tbi->Connect(
+        -1, -1,
+        &Wx::wxEVT_TASKBAR_LEFT_DOWN,
+        sub {
+            $state = !$state;
+            $tip = $state ? "Enabled" : "Disabled";
+            $tbicon->LoadFile("$tip.xpm", &Wx::wxBITMAP_TYPE_XPM);
+   #         $state ?  $TGQ->enqueue(1) : $TGQ->dequeue;
+            $tbi->SetIcon( $tbicon, $tip );
+       }
+    );
+    return 1;
+}
+
+1;
+
