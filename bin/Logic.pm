@@ -59,10 +59,9 @@ sub ProjLoop {
 
             if ( ( qx#xprop -id $winid _NET_WM_PID# =~ s/[^\d]+//r ) ~~
                 @processes )
-                
                 {
                 next
-                  if qx|xprop -id $winid _NET_WM_STATE| =~
+                  if qx|xprop -id $winid _NET_WM_STATE| !~
                       /_NET_WM_STATE_FULLSCREEN/;
 
                 #while
