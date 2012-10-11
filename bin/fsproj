@@ -1,17 +1,62 @@
 #!/usr/bin/env perl
+
 use strict;
 use warnings;
-use Main;
-use Logic;
+use threads;
+use Thread::Queue;
+
 our $VERSION = 0.03;
 our %stngs   = ();
+our ( $regex, $timeout );
+our $TQWinID = Thread::Queue->new();
+our $TQSS    = Thread::Queue->new();
 
-sub RunMainLoop {
-    foreach (%stngs) {
-        print;
-        print "\n";
+package ;
+use File::HomeDir;
+use POSIX ('setsid');
+
+my $home     = &home();
+my $conffile = "$home/.config/FullscreenProj.pl/fsproj.conf";
+
+sub readconf {
+    if ( -e $conffile ) {
+        do $conffile;
     }
+    else {
+        $regex   = qr/(libflash)|(vlc)|(mplayer)/;
+        $timeout = 50;
+        &writeconf;
+    }
+}
 
+sub writeconf {
+    mkdir $conffile =~ s/fsproj.conf//r;
+    open CONFIG, ">", $conffile;
+    print CONFIG '$regex = ' . "\"" 
+      . $regex . "\";\n"
+      . '$timeout = '
+      . $timeout . ";\n";
+    close CONFIG;
+
+}
+
+sub daemonize {
+    die "Can't chdir to /: $!" unless chdir '/';
+    umask 0;
+    die "Can't read /dev/null: $!"     unless open STDIN,  '/dev/null';
+    die "Can't write to /dev/null: $!" unless open STDOUT, '>/dev/null';
+    die "Can't write to /dev/null: $!" unless open STDERR, '>/dev/null';
+    die "Can't fork: $!" unless defined( my $pid = fork );
+    exit if $pid;
+    die "Can't start a new session: $!" unless setsid();
+    sleep 1;
+
+#    foreach ( @{ 'Proc::ProcessTable'->new->table; } ) {
+#        if ( ( $_->cmndline =~ /perl.*fsproj/ ) and ( $_->pid != $$ ) ) {
+#            die 'Another instance is running';
+#        }
+#    }
+#
 }
 
 sub FSHelp {
@@ -46,12 +91,14 @@ EOF
 }
 
 sub ARGVparse {
+    &readconf();
     $stngs{timeout} = 50;
     $stngs{GUI}     = 0;
     $stngs{state}   = 1;
     $stngs{act}     = "start";
     if ( defined @ARGV ) {
-        $stngs{act} = pop @ARGV if ( $ARGV[-1] eq "start" || $ARGV[-1] eq "stop" );
+        $stngs{act} = pop @ARGV
+          if ( $ARGV[-1] eq "start" || $ARGV[-1] eq "stop" );
         while (@ARGV) {
             my $param = shift @ARGV;
             if ( $param =~ s/^--// ) {
@@ -89,5 +136,109 @@ sub ARGVparse {
     }
 }
 
-&ARGVparse;
-&RunMainLoop;
+1;
+
+package Logic;
+use Net::DBus;
+use Proc::ProcessTable;
+$| = 1;
+my $ON  = 'xset +dpms';
+my $OFF = 'xset -dpms';
+
+sub ScreenSaver {
+    my $command;
+    foreach ( @{ 'Proc::ProcessTable'->new->table; } ) {
+        if ( $_->cmndline =~ /xscreensaver/ ) {
+            $command = qq(system "xscreensaver-command -deactivate");
+        }
+
+        elsif ( $_->cmndline =~ /kscreensaver/ ) {
+            $command =
+qq(Net::DBus->session->get_service("org.freedesktop.ScreenSaver")->get_object('/ScreenSaver')->SimulateUserActivity());
+        }
+
+        elsif ( $_->cmndline =~ /gnome-screensaver/ ) {
+            $command =
+qq(Net::DBus->session->get_service("org.gnome.ScreenSaver")->get_object('/')->SimulateUserActivity());
+        }
+    }
+    return sub {
+        while (1) {
+            if ( $TQSS->pending ) {
+                eval $command;
+                if ($@) { warn $@; }
+            }
+            sleep $timeout;
+        }
+
+      }
+}
+
+sub CheckDPMS {
+    my $DPMSPhrase = "DPMS is";
+    chomp( my $state =
+          ( qx|xset q \| grep "$DPMSPhrase" | =~ s/^\s+$DPMSPhrase\s+//r ) );
+    return $state eq "Enabled";
+}
+
+sub ProjLoop {
+    $regex = qr/(libflash)|(vlc)|(mplayer)/;
+    my $DPMSstate = &CheckDPMS;
+    my @processes;
+    while (1) {
+        my ($winid) = $TQWinID->extract( -1, 1 );
+        while ( $TQWinID->pending() ) {
+            $TQWinID->dequeue();
+        }
+
+        while ( !$TQWinID->pending() ) {
+            @processes = ();
+            foreach ( @{ 'Proc::ProcessTable'->new->table; } ) {
+                if ( $_->cmndline =~ /$regex/ ) {
+                    push @processes, $_->pid;
+                }
+            }
+            if ( ( qx#xprop -id $winid _NET_WM_PID# =~ s/[^\d]+//r ) ~~
+                @processes
+                and qx|xprop -id $winid _NET_WM_STATE| =~
+                /_NET_WM_STATE_FULLSCREEN/ )
+            {
+                $TQSS->enqueue(1);
+                system $OFF;
+            }
+            else {
+                while ( $TQSS->pending() ) {
+                    $TQSS->dequeue();
+                }
+
+                system $ON if $DPMSstate;
+            }
+            sleep $timeout;
+        }
+    }
+}
+
+sub XWinID {
+    open XPROP, 'xprop -spy -root _NET_ACTIVE_WINDOW |';
+    while (<XPROP>) {
+        my $winid = s/.*?\# (.*)/$1/r;
+        chomp $winid;
+        $TQWinID->enqueue($winid);
+    }
+}
+
+1;
+
+package FSProj;
+
+sub RunMainLoop {
+    threads->create( \&Logic::XWinID )->detach();
+    threads->create(&Logic::ScreenSaver)->detach();
+    threads->create( \&Logic::ProjLoop )->join();
+
+}
+#&StartRoutines::ARGVparse();
+&StartRoutines::FSHelp();
+
+#&FSProj::RunMainLoop();
+
