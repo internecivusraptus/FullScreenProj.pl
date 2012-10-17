@@ -6,12 +6,11 @@ use threads;
 use Thread::Queue;
 
 our $VERSION = 0.03;
-our %stngs   = ();
-our ( $regex, $timeout );
+our %settings   = ();
 our $TQWinID = Thread::Queue->new();
 our $TQSS    = Thread::Queue->new();
 
-package ;
+package Config;
 use File::HomeDir;
 use POSIX ('setsid');
 
@@ -20,8 +19,17 @@ my $conffile = "$home/.config/FullscreenProj.pl/fsproj.conf";
 
 sub readconf {
     if ( -e $conffile ) {
-        do $conffile;
-    }
+        open CONFIG, $conffile;
+        no strict;
+        while (<CONFIG>) {
+            chomp;                  
+            next if s/^(#.*|\s*)$//;
+            ($var, $value) = split(/\s*=\s*/, $_, 2);
+            $$var = $value;    
+            print "$var $value $$var\n";
+        } 
+       use strict;
+}
     else {
         $regex   = qr/(libflash)|(vlc)|(mplayer)/;
         $timeout = 50;
@@ -91,42 +99,42 @@ EOF
 }
 
 sub ARGVparse {
-    &readconf();
-    $stngs{timeout} = 50;
-    $stngs{GUI}     = 0;
-    $stngs{state}   = 1;
-    $stngs{act}     = "start";
+    &Config::readconf();
+    my $GUI     = 0;
+    my $state   = 1;
+    my $action  = "start";
     if ( defined @ARGV ) {
-        $stngs{act} = pop @ARGV
+        $action = pop @ARGV
           if ( $ARGV[-1] eq "start" || $ARGV[-1] eq "stop" );
         while (@ARGV) {
             my $param = shift @ARGV;
             if ( $param =~ s/^--// ) {
                 &FSHelp if $param eq "help";
                 if ( $param eq "timeout" ) {
-                    $stngs{timeout} = shift @ARGV;
-                    if ( $stngs{timeout} !~ /\d+/ ) {
-                        unshift @ARGV, $stngs{timeout};
-                        $stngs{timeout} = 50;
+                    shift @ARGV;
+                    if ( $_ !~ /\d+/ ) {
+                        unshift @ARGV, $_;
+                        $_= 50;
                     }
+                    $timeout = $_;
 
                     next;
                 }
                 if ( $param eq "no-gui" ) {
-                    $stngs{GUI} = 0;
+                    $GUI = 0;
                     next;
                 }
                 if ( $param eq "gui" ) {
-                    $stngs{GUI} = 1;
+                    $GUI = 1;
                     next;
                 }
 
                 if ( $param eq "disable" ) {
-                    $stngs{state} = 0;
+                    $state = 0;
                     next;
                 }
                 if ( $param eq "enable" ) {
-                    $stngs{state} = 1;
+                    $state = 1;
                     next;
                 }
 
@@ -134,6 +142,7 @@ sub ARGVparse {
 
         }
     }
+    print $timeout."\n";
 }
 
 1;
@@ -231,14 +240,15 @@ sub XWinID {
 
 package FSProj;
 
+
+$SIG{HUP} = \&Config::readconf;
+
 sub RunMainLoop {
     threads->create( \&Logic::XWinID )->detach();
     threads->create(&Logic::ScreenSaver)->detach();
     threads->create( \&Logic::ProjLoop )->join();
 
 }
-#&StartRoutines::ARGVparse();
-&StartRoutines::FSHelp();
+&Config::ARGVparse();
 
 #&FSProj::RunMainLoop();
-
