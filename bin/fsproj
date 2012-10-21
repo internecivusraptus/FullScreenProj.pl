@@ -25,14 +25,13 @@ sub readconf {
             chomp;                  
             next if s/^(#.*|\s*)$//;
             ($var, $value) = split(/\s*=\s*/, $_, 2);
-            $$var = $value;    
-            print "$var $value $$var\n";
+            $settings{$var}=$value;
         } 
        use strict;
 }
     else {
-        $regex   = qr/(libflash)|(vlc)|(mplayer)/;
-        $timeout = 50;
+        $settings{regex}   = qr/(libflash)|(vlc)|(mplayer)/;
+        $settings{timeout} = 50;
         &writeconf;
     }
 }
@@ -40,12 +39,10 @@ sub readconf {
 sub writeconf {
     mkdir $conffile =~ s/fsproj.conf//r;
     open CONFIG, ">", $conffile;
-    print CONFIG '$regex = ' . "\"" 
-      . $regex . "\";\n"
-      . '$timeout = '
-      . $timeout . ";\n";
+    foreach (keys %settings) {
+        print CONFIG "$_ = $settings{$_} \n";
+    }
     close CONFIG;
-
 }
 
 sub daemonize {
@@ -100,11 +97,11 @@ EOF
 
 sub ARGVparse {
     &Config::readconf();
-    my $GUI     = 0;
-    my $state   = 1;
-    my $action  = "start";
+    $settings{GUI}     = 0;
+    $settings{state}   = 1;
+    $settings{action}  = "start";
     if ( defined @ARGV ) {
-        $action = pop @ARGV
+        $settings{action} = pop @ARGV
           if ( $ARGV[-1] eq "start" || $ARGV[-1] eq "stop" );
         while (@ARGV) {
             my $param = shift @ARGV;
@@ -116,25 +113,25 @@ sub ARGVparse {
                         unshift @ARGV, $_;
                         $_= 50;
                     }
-                    $timeout = $_;
+                    $settings{$param} = $_;
 
                     next;
                 }
                 if ( $param eq "no-gui" ) {
-                    $GUI = 0;
+                    $settings{GUI} = 0;
                     next;
                 }
                 if ( $param eq "gui" ) {
-                    $GUI = 1;
+                    $settings{GUI} = 1;
                     next;
                 }
 
                 if ( $param eq "disable" ) {
-                    $state = 0;
+                    $settings{state} = 0;
                     next;
                 }
                 if ( $param eq "enable" ) {
-                    $state = 1;
+                    $settings{state} = 1;
                     next;
                 }
 
@@ -142,7 +139,6 @@ sub ARGVparse {
 
         }
     }
-    print $timeout."\n";
 }
 
 1;
@@ -177,7 +173,7 @@ qq(Net::DBus->session->get_service("org.gnome.ScreenSaver")->get_object('/')->Si
                 eval $command;
                 if ($@) { warn $@; }
             }
-            sleep $timeout;
+            sleep $settings{timeout};
         }
 
       }
@@ -191,7 +187,7 @@ sub CheckDPMS {
 }
 
 sub ProjLoop {
-    $regex = qr/(libflash)|(vlc)|(mplayer)/;
+    $settings{regex} = qr/(libflash)|(vlc)|(mplayer)/;
     my $DPMSstate = &CheckDPMS;
     my @processes;
     while (1) {
@@ -203,7 +199,7 @@ sub ProjLoop {
         while ( !$TQWinID->pending() ) {
             @processes = ();
             foreach ( @{ 'Proc::ProcessTable'->new->table; } ) {
-                if ( $_->cmndline =~ /$regex/ ) {
+                if ( $_->cmndline =~ /$settings{regex}/ ) {
                     push @processes, $_->pid;
                 }
             }
@@ -222,7 +218,7 @@ sub ProjLoop {
 
                 system $ON if $DPMSstate;
             }
-            sleep $timeout;
+            sleep $settings{timeout};
         }
     }
 }
