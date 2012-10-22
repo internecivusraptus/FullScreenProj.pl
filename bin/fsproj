@@ -5,10 +5,11 @@ use warnings;
 use threads;
 use Thread::Queue;
 
-our $VERSION = 0.03;
-our %settings   = ();
-our $TQWinID = Thread::Queue->new();
-our $TQSS    = Thread::Queue->new();
+our $VERSION      = 0.03;
+our %settings     = ();
+our $TQWinID      = Thread::Queue->new();
+our $TQScrSvr     = Thread::Queue->new();
+our $TQStopSignal = Thread::Queue->new();
 
 package Config;
 use File::HomeDir;
@@ -22,16 +23,19 @@ sub readconf {
         open CONFIG, $conffile;
         no strict;
         while (<CONFIG>) {
-            chomp;                  
+            chomp;
             next if s/^(#.*|\s*)$//;
-            ($var, $value) = split(/\s*=\s*/, $_, 2);
-            $settings{$var}=$value;
-        } 
-       use strict;
-}
+            ( $var, $value ) = split( /\s*=\s*/, $_, 2 );
+            $settings{$var} = $value;
+        }
+        use strict;
+    }
     else {
         $settings{regex}   = qr/(libflash)|(vlc)|(mplayer)/;
         $settings{timeout} = 50;
+        $settings{GUI}     = 0;
+        $settings{state}   = 1;
+        $settings{action}  = "start";
         &writeconf;
     }
 }
@@ -39,7 +43,7 @@ sub readconf {
 sub writeconf {
     mkdir $conffile =~ s/fsproj.conf//r;
     open CONFIG, ">", $conffile;
-    foreach (keys %settings) {
+    foreach ( keys %settings ) {
         print CONFIG "$_ = $settings{$_} \n";
     }
     close CONFIG;
@@ -56,12 +60,12 @@ sub daemonize {
     die "Can't start a new session: $!" unless setsid();
     sleep 1;
 
-#    foreach ( @{ 'Proc::ProcessTable'->new->table; } ) {
-#        if ( ( $_->cmndline =~ /perl.*fsproj/ ) and ( $_->pid != $$ ) ) {
-#            die 'Another instance is running';
-#        }
-#    }
-#
+    #    foreach ( @{ 'Proc::ProcessTable'->new->table; } ) {
+    #        if ( ( $_->cmndline =~ /perl.*fsproj/ ) and ( $_->pid != $$ ) ) {
+    #            die 'Another instance is running';
+    #        }
+    #    }
+    #
 }
 
 sub FSHelp {
@@ -96,49 +100,44 @@ EOF
 }
 
 sub ARGVparse {
-    &Config::readconf();
-    $settings{GUI}     = 0;
-    $settings{state}   = 1;
-    $settings{action}  = "start";
-    if ( defined @ARGV ) {
-        $settings{action} = pop @ARGV
-          if ( $ARGV[-1] eq "start" || $ARGV[-1] eq "stop" );
-        while (@ARGV) {
-            my $param = shift @ARGV;
-            if ( $param =~ s/^--// ) {
-                &FSHelp if $param eq "help";
-                if ( $param eq "timeout" ) {
-                    shift @ARGV;
-                    if ( $_ !~ /\d+/ ) {
-                        unshift @ARGV, $_;
-                        $_= 50;
-                    }
-                    $settings{$param} = $_;
+    $settings{action} = pop @ARGV
+      if ( $ARGV[-1] eq "start" || $ARGV[-1] eq "stop" );
+    while (@ARGV) {
+        my $param = shift @ARGV;
+        if ( $param =~ s/^--// ) {
+            &FSHelp if $param eq "help";
+            if ( $param eq "timeout" ) {
+                $_ = shift @ARGV;
+                if ( $_ !~ /\d+/ ) {
+                    unshift @ARGV, $_;
+                    $_ = 50;
+                }
+                $settings{$param} = $_;
 
-                    next;
-                }
-                if ( $param eq "no-gui" ) {
-                    $settings{GUI} = 0;
-                    next;
-                }
-                if ( $param eq "gui" ) {
-                    $settings{GUI} = 1;
-                    next;
-                }
+                next;
+            }
+            if ( $param eq "no-gui" ) {
+                $settings{GUI} = 0;
+                next;
+            }
+            if ( $param eq "gui" ) {
+                $settings{GUI} = 1;
+                next;
+            }
 
-                if ( $param eq "disable" ) {
-                    $settings{state} = 0;
-                    next;
-                }
-                if ( $param eq "enable" ) {
-                    $settings{state} = 1;
-                    next;
-                }
-
+            if ( $param eq "disable" ) {
+                $settings{state} = 0;
+                next;
+            }
+            if ( $param eq "enable" ) {
+                $settings{state} = 1;
+                next;
             }
 
         }
+
     }
+    &Config::writeconf();
 }
 
 1;
@@ -168,8 +167,8 @@ qq(Net::DBus->session->get_service("org.gnome.ScreenSaver")->get_object('/')->Si
         }
     }
     return sub {
-        while (1) {
-            if ( $TQSS->pending ) {
+        while ( $TQStopSignal->pending ) {
+            if ( $TQScrSvr->pending ) {
                 eval $command;
                 if ($@) { warn $@; }
             }
@@ -190,7 +189,7 @@ sub ProjLoop {
     $settings{regex} = qr/(libflash)|(vlc)|(mplayer)/;
     my $DPMSstate = &CheckDPMS;
     my @processes;
-    while (1) {
+    while ( $TQStopSignal->pending ) {
         my ($winid) = $TQWinID->extract( -1, 1 );
         while ( $TQWinID->pending() ) {
             $TQWinID->dequeue();
@@ -208,12 +207,12 @@ sub ProjLoop {
                 and qx|xprop -id $winid _NET_WM_STATE| =~
                 /_NET_WM_STATE_FULLSCREEN/ )
             {
-                $TQSS->enqueue(1);
+                $TQScrSvr->enqueue(1);
                 system $OFF;
             }
             else {
-                while ( $TQSS->pending() ) {
-                    $TQSS->dequeue();
+                while ( $TQScrSvr->pending() ) {
+                    $TQScrSvr->dequeue();
                 }
 
                 system $ON if $DPMSstate;
@@ -236,15 +235,25 @@ sub XWinID {
 
 package FSProj;
 
+$SIG{HUP}  = \&Config::readconf;
+$SIG{KILL} = \&FSProj::OnKill;
+$SIG{TERM} = \&FSProj::OnKill;
+$SIG{QUIT} = \&FSProj::OnKill;
 
-$SIG{HUP} = \&Config::readconf;
+sub OnKill {
+    &Config::writeconf();
+    $TQStopSignal->dequeue();
+}
 
 sub RunMainLoop {
     threads->create( \&Logic::XWinID )->detach();
     threads->create(&Logic::ScreenSaver)->detach();
     threads->create( \&Logic::ProjLoop )->join();
-
 }
-&Config::ARGVparse();
 
-#&FSProj::RunMainLoop();
+&Config::readconf();
+if ( defined @ARGV ) {
+    &Config::ARGVparse();
+}
+
+&FSProj::RunMainLoop();
