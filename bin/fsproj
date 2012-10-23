@@ -4,8 +4,10 @@ use strict;
 use warnings;
 use threads;
 use Thread::Queue;
+use sigtrap 'handler' => \&Config::daemonize, 'HUP';
 
 our $VERSION      = 0.03;
+our $TITLE = "Crazy Fullscreen Detector & Screensaver Disabler\nVersion: $VERSION;\n\nCopyright (C) 2012, Igor Gritsenko.\n=================\n";
 our %settings     = ();
 our $TQWinID      = Thread::Queue->new();
 our $TQScrSvr     = Thread::Queue->new();
@@ -21,14 +23,12 @@ my $conffile = "$home/.config/FullscreenProj.pl/fsproj.conf";
 sub readconf {
     if ( -e $conffile ) {
         open CONFIG, $conffile;
-        no strict;
         while (<CONFIG>) {
             chomp;
             next if s/^(#.*|\s*)$//;
-            ( $var, $value ) = split( /\s*=\s*/, $_, 2 );
+            my ( $var, $value ) = split( /\s*=\s*/, $_, 2 );
             $settings{$var} = $value;
         }
-        use strict;
     }
     else {
         $settings{regex}   = qr/(libflash)|(vlc)|(mplayer)/;
@@ -41,41 +41,44 @@ sub readconf {
 }
 
 sub writeconf {
+    $settings{action} = "start";
     mkdir $conffile =~ s/fsproj.conf//r;
     open CONFIG, ">", $conffile;
     foreach ( keys %settings ) {
-        print CONFIG "$_ = $settings{$_} \n";
+        print CONFIG "$_ = $settings{$_}\n";
     }
     close CONFIG;
 }
 
 sub daemonize {
+    &Config::writeconf();
     die "Can't chdir to /: $!" unless chdir '/';
     umask 0;
-    die "Can't read /dev/null: $!"     unless open STDIN,  '/dev/null';
-    die "Can't write to /dev/null: $!" unless open STDOUT, '>/dev/null';
-    die "Can't write to /dev/null: $!" unless open STDERR, '>/dev/null';
+
+    #    die "Can't read /dev/null: $!"     unless open STDIN,  '/dev/null';
+    #    die "Can't write to /dev/null: $!" unless open STDOUT, '>/dev/null';
+    #    die "Can't write to /dev/null: $!" unless open STDERR, '>/dev/null';
     die "Can't fork: $!" unless defined( my $pid = fork );
     exit if $pid;
     die "Can't start a new session: $!" unless setsid();
-    sleep 1;
+}
 
-    #    foreach ( @{ 'Proc::ProcessTable'->new->table; } ) {
-    #        if ( ( $_->cmndline =~ /perl.*fsproj/ ) and ( $_->pid != $$ ) ) {
-    #            die 'Another instance is running';
-    #        }
-    #    }
-    #
+sub FSPlist {
+    my $regexes = $settings{regex} =~ s/[\(\)\:\^?]//gr;
+    my @regexes = split( /\|/, $regexes );
+    print $TITLE;
+    print "We are currently tracking such processes:\n\n";
+    foreach (@regexes) {
+        print "\t\t\t$_\n";
+    }
+    print "\n";
+    exit;
 }
 
 sub FSHelp {
     print <<EOF;
 
-Crazy Fullscreen Detector & Screensaver Disabler
-Version: $VERSION;
-
-Copyright (C) 2012, Igor Gritsenko.
-=================
+$TITLE
 
 Usage: fsproj [some options] <start|stop>
 
@@ -86,13 +89,15 @@ stop           Stops the script. All parameters will be ignored.
 If script runs without action, it suggests that user wanted to start.
 
   Options:
---help         This help text.
---no-gui       Do not use the GUI (Default).
---gui          Enable WxWidgets GUI.
---timeout sec  Set timeout in seconds.
---disable      Start script only, don't allow anything to do.
---enable       Start script and let him do work (Default).
-
+--help                  This help text.
+--no-gui                Do not use the GUI (Default).
+--gui                   Enable WxWidgets GUI.
+--timeout sec           Set timeout in seconds.
+--disable               Start script only, don't allow anything to do.
+--enable                Start script and let him do work (Default).
+--process-list          Show current process checking list.
+--add-process process   Not implemented yet.
+--del-process process   Not implemented yet.
 
 EOF
     exit;
@@ -100,12 +105,13 @@ EOF
 }
 
 sub ARGVparse {
-    $settings{action} = pop @ARGV
-      if ( $ARGV[-1] eq "start" || $ARGV[-1] eq "stop" );
+    $settings{action} =
+      ( $ARGV[-1] eq "start" || $ARGV[-1] eq "stop" ) ? pop @ARGV : "start";
     while (@ARGV) {
         my $param = shift @ARGV;
         if ( $param =~ s/^--// ) {
-            &FSHelp if $param eq "help";
+            &FSHelp  if $param eq "help";
+            &FSPlist if $param eq "process-list";
             if ( $param eq "timeout" ) {
                 $_ = shift @ARGV;
                 if ( $_ !~ /\d+/ ) {
@@ -137,7 +143,6 @@ sub ARGVparse {
         }
 
     }
-    &Config::writeconf();
 }
 
 1;
@@ -156,7 +161,7 @@ sub ScreenSaver {
             $command = qq(system "xscreensaver-command -deactivate");
         }
 
-        elsif ( $_->cmndline =~ /kscreensaver/ ) {
+        elsif ( $_->cmndline =~ /krunner/ ) {
             $command =
 qq(Net::DBus->session->get_service("org.freedesktop.ScreenSaver")->get_object('/ScreenSaver')->SimulateUserActivity());
         }
@@ -167,14 +172,15 @@ qq(Net::DBus->session->get_service("org.gnome.ScreenSaver")->get_object('/')->Si
         }
     }
     return sub {
+        my $timeout = $settings{timeout};
         while ( $TQStopSignal->pending ) {
             if ( $TQScrSvr->pending ) {
                 eval $command;
                 if ($@) { warn $@; }
             }
+            print $settings{timeout};
             sleep $settings{timeout};
         }
-
       }
 }
 
@@ -186,7 +192,6 @@ sub CheckDPMS {
 }
 
 sub ProjLoop {
-    $settings{regex} = qr/(libflash)|(vlc)|(mplayer)/;
     my $DPMSstate = &CheckDPMS;
     my @processes;
     while ( $TQStopSignal->pending ) {
@@ -196,6 +201,8 @@ sub ProjLoop {
         }
 
         while ( !$TQWinID->pending() ) {
+
+            #exit unless $TQStopSignal->pending;
             @processes = ();
             foreach ( @{ 'Proc::ProcessTable'->new->table; } ) {
                 if ( $_->cmndline =~ /$settings{regex}/ ) {
@@ -207,7 +214,7 @@ sub ProjLoop {
                 and qx|xprop -id $winid _NET_WM_STATE| =~
                 /_NET_WM_STATE_FULLSCREEN/ )
             {
-                $TQScrSvr->enqueue(1);
+                $TQScrSvr->enqueue( $settings{timeout} );
                 system $OFF;
             }
             else {
@@ -220,6 +227,7 @@ sub ProjLoop {
             sleep $settings{timeout};
         }
     }
+    close XPROP;
 }
 
 sub XWinID {
@@ -235,17 +243,13 @@ sub XWinID {
 
 package FSProj;
 
-$SIG{HUP}  = \&Config::readconf;
-$SIG{KILL} = \&FSProj::OnKill;
-$SIG{TERM} = \&FSProj::OnKill;
-$SIG{QUIT} = \&FSProj::OnKill;
-
-sub OnKill {
-    &Config::writeconf();
-    $TQStopSignal->dequeue();
+sub ActionHandle {
+    my ( $signal, $pid ) = @_;
+    kill $signal => $pid;
 }
 
 sub RunMainLoop {
+    &Config::daemonize;
     threads->create( \&Logic::XWinID )->detach();
     threads->create(&Logic::ScreenSaver)->detach();
     threads->create( \&Logic::ProjLoop )->join();
@@ -255,5 +259,16 @@ sub RunMainLoop {
 if ( defined @ARGV ) {
     &Config::ARGVparse();
 }
-
+foreach ( @{ 'Proc::ProcessTable'->new->table; } ) {
+    if ( ( $_->cmndline =~ /perl.*fsproj/ ) and ( $_->pid != $$ ) ) {
+        my $sig =
+            $settings{action} eq "stop"  ? 'KILL'
+          : $settings{action} eq "start" ? 'HUP'
+          :                                0;
+        &FSProj::ActionHandle( $sig, $_->pid );
+        exit;
+    }
+}
+exit if $settings{action} ne "start";
+$TQStopSignal->enqueue(1);
 &FSProj::RunMainLoop();
