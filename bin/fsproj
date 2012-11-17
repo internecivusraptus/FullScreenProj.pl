@@ -4,13 +4,8 @@ use strict;
 use warnings;
 use threads;
 use Thread::Queue;
-#use sigtrap 'handler' => \&Config::daemonize, 'HUP';
-#use sigtrap 'handler' => \&exit, 'HUP';
 
 our $VERSION = 0.03;
-our $TITLE =
-"Crazy Fullscreen Detector & Screensaver Disabler\nVersion: $VERSION;\n\nCopyright © 2012, Igor Gritsenko.
-\n=================\n";
 our %settings = ();
 our $TQWinID  = Thread::Queue->new();
 our $TQScrSvr = Thread::Queue->new();
@@ -18,9 +13,11 @@ our $TQScrSvr = Thread::Queue->new();
 package Config;
 use File::HomeDir;
 use POSIX ('setsid');
+use Getopt::Long;
+use Pod::Usage;
 
 my $home     = &home();
-my $conffile = "$home/.config/FullscreenProj.pl/fsproj.conf";
+my $conffile = "$home/.config/FullscreenProj.pl/fsproj.t.conf";
 
 sub readconf {
     if ( -e $conffile ) {
@@ -33,10 +30,10 @@ sub readconf {
         }
     }
     else {
-        $settings{regex}   = qr/(libflash)|(vlc)|(mplayer)/;
+        $settings{regex}   = qr/(libflash)/;
         $settings{timeout} = 50;
-        $settings{GUI}     = 0;
-        $settings{state}   = 0;
+        $settings{gui}     = 0;
+        $settings{state}   = 1;
         $settings{action}  = "start";
         &writeconf;
     }
@@ -44,7 +41,7 @@ sub readconf {
 
 sub writeconf {
     $settings{action} = "start";
-    mkdir $conffile =~ s/fsproj.conf//r;
+    mkdir $conffile =~ s/fsproj.t.conf//r;
     open CONFIG, ">", $conffile;
     foreach ( keys %settings ) {
         print CONFIG "$_ = $settings{$_}\n";
@@ -56,198 +53,74 @@ sub daemonize {
     die "Can't chdir to /: $!" unless chdir '/';
     umask 0;
 
-    #    die "Can't read /dev/null: $!"     unless open STDIN,  '/dev/null';
-    #    die "Can't write to /dev/null: $!" unless open STDOUT, '>/dev/null';
-    #    die "Can't write to /dev/null: $!" unless open STDERR, '>/dev/null';
+    die "Can't read /dev/null: $!"     unless open STDIN,  '/dev/null';
+    die "Can't write to /dev/null: $!" unless open STDOUT, '>/dev/null';
+    die "Can't write to /dev/null: $!" unless open STDERR, '>/dev/null';
     die "Can't fork: $!" unless defined( my $pid = fork );
     exit if $pid;
-    &Config::readconf;
     die "Can't start a new session: $!" unless setsid();
 }
 
 sub FSProcHandle {
-    my ( $proc, $action ) = @_;
-
+    my ( $aproc, $dproc ) = @_;
+    my %unproc = ();
+    $unproc{$_} = 1
+      foreach ( &Config::regexp2array( $settings{regex} ), @$aproc );
+    delete $unproc{$_} foreach (@$dproc);
+    @$aproc = sort keys %unproc;
+    return &Config::array2regexp(@$aproc);
 }
 
+sub regexp2array {
+    return split( /\|/, shift =~ s/[\(\)\:\^\?]//gr );
+}
+sub array2regexp {
+    return "(?^:(" . join( ')|(', shift ) . "))";
+}
 sub FSPlist {
-    my $regexes = $settings{regex} =~ s/[\(\)\:\^\?]//gr;
-    my @regexes = split( /\|/, $regexes );
     print "We are currently tracking such processes:\n\n";
-    foreach (@regexes) {
+    foreach (&Config::regexp2array($settings{regex})) {
         print "\t\t\t$_\n";
     }
     print "\n";
     exit;
 }
 
-sub FSHelp {
-    print <<EOF;
-
-Usage: fsproj [some options] <start|stop>
-
-  Actions: 
-start          Starts the script, if not started yet, and  sets the specified options.
-stop           Stops the script. All parameters will be ignored.
-
-If script runs without action, it suggests that user wanted to start.
-
-  Options:
---help                  This help text.
---no-gui                Do not use the GUI (Default).
---gui                   Enable WxWidgets GUI (Not implemented yet).
---timeout sec           Set timeout in seconds.
---disable               Start script only, don't allow anything to do. (Not implemented yet).
---enable                Start script and let him do work (Default). (Not implemented yet).
---process-list          Show current process checking list.
---add-proc process      Add process for tracking (Not implemented yet).
---del-proc process      Delete process from tracking (Not implemented yet).
-
-EOF
-    exit;
-
-}
-
 sub ARGVparse {
-    $settings{action} =
-      ( $ARGV[-1] eq "start" || $ARGV[-1] eq "stop" ) ? pop @ARGV : "start";
-    while (@ARGV) {
-        my $param = shift @ARGV;
-        if ( $param =~ s/^--// ) {
-            &FSHelp  if $param eq "help";
-            &FSPlist if $param eq "process-list";
-            if ( $param eq "timeout" ) {
-                $_ = shift @ARGV;
-                if ( $_ =~ /\d+/ ) {
-                    $settings{$param} = $_;
-                }
-                else {
-                    unshift @ARGV, $_;
-                }
-                next;
-            }
-            if ( $param eq "no-gui" ) {
-                $settings{GUI} = 0;
-                next;
-            }
-            if ( $param eq "gui" ) {
-                $settings{GUI} = 1;
-                next;
-            }
+    my %tempsets;
+    my @dprocs;
+    my @aprocs;
+    &Config::readconf();
+    GetOptions(
+        \%tempsets, 'timeout=i', 'gui!', 'enable',
+        'add-proc=s{,}' => \@aprocs,
+        'del-proc=s{,}' => \@dprocs,
+        'help'          => sub { &Pod::Usage::pod2usage(-verbose => 99,
+    -sections => "NAME|SYNOPSIS|OPTIONS|ARGUMENTS"); },
+        'disable'       => sub { $tempsets{enable} = 0 },
+        'process-list' => sub { &Config::FSPlist },
 
-            if ( $param eq "disable" ) {
-                $settings{state} = 0;
-                next;
-            }
-            if ( $param eq "enable" ) {
-                $settings{state} = 1;
-                next;
-            }
-            print "I don't know anything about --$param, try --help\n";
-            exit;
-        }
+    );
 
+    foreach my $key ( keys %tempsets ) {
+        $settings{$key} = $tempsets{$key};
     }
+    $settings{regex} = &Config::FSProcHandle( \@aprocs, \@dprocs )
+      if ( @aprocs or @dprocs );
+    $settings{action} =
+      ( "start" ~~ @ARGV || "stop" ~~ @ARGV) ? pop @ARGV : "start"
+      if (@ARGV);
+    foreach my $key ( keys %settings ) {
+        print "$key -> $settings{$key}\n";
+    }
+
     return $settings{action} eq "start";
 }
 
 1;
 
-package Logic;
-use Net::DBus;
-use Proc::ProcessTable;
-$| = 1;
-my $ON  = 'xset +dpms';
-my $OFF = 'xset -dpms';
-
-sub ScreenSaver {
-    my $command;
-    foreach ( @{ 'Proc::ProcessTable'->new->table; } ) {
-        if ( $_->cmndline =~ /xscreensaver/ ) {
-            $command = qq(system "xscreensaver-command -deactivate");
-        }
-
-        elsif ( $_->cmndline =~ /krunner/ ) {
-            $command =
-qq(Net::DBus->session->get_service("org.freedesktop.ScreenSaver")->get_object('/ScreenSaver')->SimulateUserActivity());
-        }
-
-        elsif ( $_->cmndline =~ /gnome-screensaver/ ) {
-            $command =
-qq(Net::DBus->session->get_service("org.gnome.ScreenSaver")->get_object('/')->SimulateUserActivity());
-        }
-    }
-    return sub {
-        while (1) {
-            my $timeout=$settings{timeout};
-            if ( $TQScrSvr->pending ) {
-                $timeout=$TQScrSvr->peek();
-                eval $command;
-                if ($@) { warn $@; }
-            }
-            print $timeout;
-            sleep $timeout;
-        }
-      }
-}
-
-sub CheckDPMS {
-    my $DPMSPhrase = "DPMS is";
-    chomp( my $state =
-          ( qx|xset q \| grep "$DPMSPhrase" | =~ s/^\s+$DPMSPhrase\s+//r ) );
-    return $state eq "Enabled";
-}
-
-sub ProjLoop {
-    my $DPMSstate = &CheckDPMS;
-    my @processes;
-    while (1) {
-        my ($winid) = $TQWinID->peek;
-        while ( $TQWinID->pending() ) {
-            $TQWinID->dequeue();
-        }
-
-        while ( !$TQWinID->pending() ) {
-
-            @processes = ();
-            foreach ( @{ 'Proc::ProcessTable'->new->table; } ) {
-                if ( $_->cmndline =~ /$settings{regex}/ ) {
-                    push @processes, $_->pid;
-                }
-            }
-            if ( ( qx#xprop -id $winid _NET_WM_PID# =~ s/[^\d]+//r ) ~~
-                @processes
-                and qx|xprop -id $winid _NET_WM_STATE| =~
-                /_NET_WM_STATE_FULLSCREEN/ )
-            {
-                $TQScrSvr->enqueue( $settings{timeout} );
-                system $OFF;
-            }
-            else {
-                while ( $TQScrSvr->pending() ) {
-                    $TQScrSvr->dequeue();
-                }
-
-                system $ON if $DPMSstate;
-            }
-            sleep $settings{timeout};
-        }
-    }
-    close XPROP;
-}
-
-sub XWinID {
-    open XPROP, 'xprop -spy -root _NET_ACTIVE_WINDOW |';
-    while (<XPROP>) {
-        my $winid = s/.*?\# (.*)/$1/r;
-        chomp $winid;
-        $TQWinID->enqueue($winid);
-    }
-}
-
-1;
-
 package FSProj;
+use Proc::ProcessTable;
 
 sub ActionHandle {
     my ( $signal, $pid ) = @_;
@@ -263,26 +136,224 @@ sub RunMainLoop {
     threads->create( \&Logic::ProjLoop )->join();
 }
 
-print $TITLE;
-$settings{action} = "start";
-$settings{state}  = 1;
-$settings{GUI}    = 0;
+if (@ARGV) {&Config::ARGVparse();} else {&Pod::Usage::pod2usage(-verbose => 99,
+    -sections => "NAME|SYNOPSIS")}
 
-if ( defined @ARGV ) {
-    &Config::readconf();
-    &Config::writeconf if &Config::ARGVparse();
-
-}
-print "$settings{timeout}\n";
+#print "$settings{timeout}\n";
 foreach ( @{ 'Proc::ProcessTable'->new->table; } ) {
     if ( ( $_->cmndline =~ /perl.*fsproj/ ) and ( $_->pid != $$ ) ) {
-        my $sig =
-            $settings{action} eq "stop"  ? 'KILL'
-          : $settings{action} eq "start" ? 'HUP'
-          :                                0;
-        &FSProj::ActionHandle( $sig, $_->pid );
-        exit;
+        &FSProj::ActionHandle( 'KILL', $_->pid );
     }
 }
-exit if $settings{action} ne "start";
-&FSProj::RunMainLoop();
+
+#exit if $settings{action} ne "start";
+#print "$settings{action}\n";
+#&FSProj::RunMainLoop();
+
+__END__
+
+=pod
+
+=head1 NAME
+
+fsproj - Crazy Fullscreen Detector & Screensaver Disabler
+
+=head1 SYNOPSIS
+
+fsproj [options] <action>
+
+Actions:
+
+B<start stop>
+
+Options:
+
+B<[--help] [--no-gui] [--gui] [--timeout seconds] [--disable] [--enable] [--process-list] [--add-proc process] [--del-proc process]>
+
+Use --help for more information.
+
+=head1 OPTIONS
+
+=over 8
+
+=item B<--help>
+
+Long description of command line options.
+
+=back
+
+=over 8
+
+=item B<--no-gui>
+
+Do not use the GUI (Default).
+
+=back
+
+=over 8
+
+=item B<--gui>
+
+Enable WxWidgets GUI.
+
+=back
+
+=over 8
+
+=item B<--timeout seconds>
+
+Set timeout in seconds.
+
+=back
+
+=over 8
+
+=item B<--disable>
+
+Start script only, don't allow anything to do.
+
+=back
+
+=over 8
+
+=item B<--enable>
+
+Start script and let him do work (Default). 
+
+=back
+
+=over 8
+
+=item B<--process-list>
+
+Show current tracking process list.
+
+=back
+
+=over 8
+
+=item B<--add-proc process>
+
+Add process for tracking.
+
+=back
+
+=over 8
+
+=item B<--del-proc process>
+
+Delete process from tracking.
+
+=back
+
+=head1 ARGUMENTS
+
+=over 8
+
+=item B<start> 
+
+Starts the script, if not started yet, and  sets the specified options.
+
+=back
+
+=over 8
+
+=item B<stop>  
+
+Stops the script. All options will be ignored.
+
+=back 
+
+Any other arguments will be ignored. If script runs without action, it saves parameters and, if running, restarts the utility.
+
+
+=head1 DESCRIPTION
+
+I<FullScreenProj.pl> a.k.a I<fsproj> - small utility that detects various videoplayers fullscreen and allows users to disable screensaver and/or screen power off via DPMS. Users can control its behaviour via command line.
+
+Default timeout is set to 50 seconds, default process list includes vlc, mplayer, and flash plugin. 
+Settings that were changed via command line, are saved in config file, thus could be used for further usage. See L</EXAMPLES> for more info.
+
+=head1 EXAMPLES
+
+=over 8
+
+=item C<fsproj>
+
+Runs brief help and exit.
+
+=back
+
+=over 8
+
+=item C<fsproj start>
+
+Starts or restarts the utility with default or saved configuration.
+
+=back
+
+=over 8
+
+=item C<fsproj stop>
+
+Stops the utility.
+
+=back
+
+=over 8
+
+=item C<fsproj --timeout 10 start>
+
+Starts or restarts the utility, with changed timeout and saves this timeout to config.
+
+=back
+
+
+=over 8
+
+=item C<fsproj --add-proc totem --del-proc mplayer vlc start>
+
+Starts or restarts the utility, removing mplayer and vlc from tracking list and adding totem to it. All changes are saved to config. 
+
+=back
+
+
+=over 8
+
+=item C<fsproj --gui start>
+
+Add WxWidgets GUI for easy use of novice users. Implemented, but bugged and not currently integrated in utility.
+
+=back
+
+
+=over 8
+
+=item C<fsproj --process-list>
+
+Shows info about currently tracked processes and exit. 
+
+=back
+
+
+=over 8
+
+=item C<fsproj --disable>
+
+Disables processing if started and saves this parameter to config file. It won't start script if it wasn't running. If script is running, this command don't stop it, it will wait until C<fsproj --enable> or C<fsproj stop>.
+
+=back
+
+
+=head1 AUTHOR
+
+Igor Gritsenko <xenomorph@mail.univ.kiev.ua>
+
+=head1 COPYRIGHT
+
+Copyright (c) 2012 Igor Gritsenko <xenomorph@mail.univ.kiev.ua>
+
+This program is free software; you can redistribute it and/or
+                modify it under the same terms as Perl itself.
+
+=cut
