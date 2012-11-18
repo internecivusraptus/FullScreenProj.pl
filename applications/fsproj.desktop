@@ -5,5 +5,5 @@ Type=Application
 Name=FullScreen Project
 Name[en_US]=FullScreen Project
 Icon=preferences-desktop-screensaver
-Exec=fsproj
+Exec=fsproj start
 Comment[en_US]=

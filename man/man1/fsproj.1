@@ -124,7 +124,7 @@
 .\" ========================================================================
 .\"
 .IX Title "FSPROJ 1"
-.TH FSPROJ 1 "2012-11-17" "perl v5.14.2" "User Contributed Perl Documentation"
+.TH FSPROJ 1 "2012-11-18" "perl v5.14.2" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -148,7 +148,7 @@ Use \-\-help for more information.
 .IX Header "OPTIONS"
 .IP "\fB\-\-help\fR" 8
 .IX Item "--help"
-Long description of command line options.
+Verbose description of command line options.
 .IP "\fB\-\-no\-gui\fR" 8
 .IX Item "--no-gui"
 Do not use the \s-1GUI\s0 (Default).
@@ -160,10 +160,10 @@ Enable WxWidgets \s-1GUI\s0.
 Set timeout in seconds.
 .IP "\fB\-\-disable\fR" 8
 .IX Item "--disable"
-Start script only, don't allow anything to do.
+Start inactive script.
 .IP "\fB\-\-enable\fR" 8
 .IX Item "--enable"
-Start script and let him do work (Default).
+Start script and activate it (Default).
 .IP "\fB\-\-process\-list\fR" 8
 .IX Item "--process-list"
 Show current tracking process list.
@@ -182,13 +182,13 @@ Starts the script, if not started yet, and  sets the specified options.
 .IX Item "stop"
 Stops the script. All options will be ignored.
 .PP
-Any other arguments will be ignored. If script runs without action, it saves parameters and, if running, restarts the utility.
+Any other arguments will be ignored. If neither \fBstart\fR nor \fBstop\fR arguments are applied, the script saves parameters; if it was already running, restarts the utility.
 .SH "DESCRIPTION"
 .IX Header "DESCRIPTION"
-\&\fIFullScreenProj.pl\fR a.k.a \fIfsproj\fR \- small utility that detects various videoplayers fullscreen and allows users to disable screensaver and/or screen power off via \s-1DPMS\s0. Users can control its behaviour via command line.
+\&\fIFullScreenProj.pl\fR a.k.a \fIfsproj\fR is a small utility that detects various videoplayers in fullscreen mode and allows users to disable screensaver and/or screen power off via \s-1DPMS\s0. Users can control its behaviour via command line.
 .PP
 Default timeout is set to 50 seconds, default process list includes vlc, mplayer, and flash plugin. 
-Settings that were changed via command line, are saved in config file, thus could be used for further usage. See \*(L"\s-1EXAMPLES\s0\*(R" for more info.
+Settings that were changed via command line, are saved in config file, thus they could be used for further usage. See \*(L"\s-1EXAMPLES\s0\*(R" for more info.
 .SH "EXAMPLES"
 .IX Header "EXAMPLES"
 .ie n .IP """fsproj""" 8
@@ -198,7 +198,7 @@ Runs brief help and exit.
 .ie n .IP """fsproj start""" 8
 .el .IP "\f(CWfsproj start\fR" 8
 .IX Item "fsproj start"
-Starts or restarts the utility with default or saved configuration.
+Starts or restarts the utility with previous configuration.
 .ie n .IP """fsproj stop""" 8
 .el .IP "\f(CWfsproj stop\fR" 8
 .IX Item "fsproj stop"
@@ -214,11 +214,11 @@ Starts or restarts the utility, removing mplayer and vlc from tracking list and 
 .ie n .IP """fsproj \-\-gui start""" 8
 .el .IP "\f(CWfsproj \-\-gui start\fR" 8
 .IX Item "fsproj --gui start"
-Add WxWidgets \s-1GUI\s0 for easy use of novice users. Implemented, but bugged and not currently integrated in utility.
+Add WxWidgets \s-1GUI\s0 for easy use by novice users. Implemented, but bugged and not currently integrated in utility.
 .ie n .IP """fsproj \-\-process\-list""" 8
 .el .IP "\f(CWfsproj \-\-process\-list\fR" 8
 .IX Item "fsproj --process-list"
-Shows info about currently tracked processes and exit.
+Shows info about currently tracked processes and exits.
 .ie n .IP """fsproj \-\-disable""" 8
 .el .IP "\f(CWfsproj \-\-disable\fR" 8
 .IX Item "fsproj --disable"
