@@ -1,9 +1,0 @@
-
-[Desktop Entry]
-Encoding=UTF-8
-Type=Application
-Name=FullScreen Project
-Name[en_US]=FullScreen Project
-Icon=preferences-desktop-screensaver
-Exec=fsproj start
-Comment[en_US]=
