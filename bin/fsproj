@@ -1,19 +1,56 @@
 #!/usr/bin/env perl
 
+use v5.10;
 use strict;
 use warnings;
 use threads;
 use Thread::Queue;
-    
+use Proc::ProcessTable;
+
 our $VERSION  = 0.5;
 our %settings = ();
 our $TQWinID  = Thread::Queue->new();
 our $TQScrSvr = Thread::Queue->new();
 our $TQEnable = Thread::Queue->new();
 
-package Config;
-use File::HomeDir;
+package FSProj::Utils;
 use POSIX ('setsid');
+
+sub regexp2array {
+        return split( /\|/, shift =~ s/[\(\)\:\^\?]//gr );
+}
+
+sub array2regexp {
+        return "(?^:(" . join( ')|(', @_ ) . "))";
+}
+
+sub processlist {
+    my $cmndline = shift;
+    $cmndline = qr/perl.*fsproj/ unless defined $cmndline;
+    my @processlist = ();
+    foreach ( @{ 'Proc::ProcessTable'->new->table; } ) {
+        if ( $_->cmndline =~ $cmndline ) {
+            push @processlist, $_->pid;
+        }
+    }
+    return @processlist;
+}
+
+sub daemonize {
+    die "Can't chdir to /: $!" unless chdir '/';
+    umask 0;
+
+    die "Can't read /dev/null: $!"     unless open STDIN,  '/dev/null';
+    die "Can't write to /dev/null: $!" unless open STDOUT, '>/dev/null';
+    die "Can't write to /dev/null: $!" unless open STDERR, '>/dev/null';
+    die "Can't fork: $!" unless defined( my $pid = fork );
+    exit if $pid;
+    die "Can't start a new session: $!" unless setsid();
+}
+1;
+
+package FSProj::Config;
+use File::HomeDir;
 use Getopt::Long;
 use Pod::Usage;
 
@@ -34,7 +71,7 @@ sub readconf {
         $settings{regex}   = qr/(libflash)/;
         $settings{timeout} = 50;
         $settings{gui}     = 0;
-        $settings{state}   = 1;
+        $settings{enable}  = 1;
         $settings{action}  = "start";
         &writeconf;
     }
@@ -50,50 +87,72 @@ sub writeconf {
     close CONFIG;
 }
 
-sub daemonize {
-    die "Can't chdir to /: $!" unless chdir '/';
-    umask 0;
-
-    die "Can't read /dev/null: $!"     unless open STDIN,  '/dev/null';
-    die "Can't write to /dev/null: $!" unless open STDOUT, '>/dev/null';
-    die "Can't write to /dev/null: $!" unless open STDERR, '>/dev/null';
-    die "Can't fork: $!" unless defined( my $pid = fork );
-    exit if $pid;
-    die "Can't start a new session: $!" unless setsid();
-}
-
 sub FSProcHandle {
     my ( $aproc, $dproc ) = @_;
     my %unproc = ();
     $unproc{$_} = 1
-      foreach ( &Config::regexp2array( $settings{regex} ), @$aproc );
+      foreach ( &FSProj::Utils::regexp2array( $settings{regex} ), @$aproc );
     delete $unproc{$_} foreach (@$dproc);
     @$aproc = sort keys %unproc;
-    return &Config::array2regexp(@$aproc);
-}
-
-sub regexp2array {
-    return split( /\|/, shift =~ s/[\(\)\:\^\?]//gr );
-}
-
-sub array2regexp {
-    return "(?^:(" . join( ')|(',  @_ ) . "))";
+    return &FSProj::Utils::array2regexp(@$aproc);
 }
 
 sub FSPlist {
-    print "We are currently tracking such processes:\n\n";
-    foreach ( &Config::regexp2array( $settings{regex} ) ) {
+    print "We are currently tracking such processes:\n";
+    foreach ( &FSProj::Utils::regexp2array( $settings{regex} ) ) {
         print "\t\t\t$_\n";
     }
-    print "\n";
     exit;
 }
 
 sub ARGVparse {
+    my @thisproc = &FSProj::Utils::processlist;
+    given (@ARGV) {
+
+        when ( "stop"    ~~ \@ARGV ) { $settings{action} = "stop"; }
+        when ( "status"  ~~ \@ARGV ) { $settings{action} = "status"; }
+        when ( "start"   ~~ \@ARGV ) { $settings{action} = "start"; }
+        when ( "restart" ~~ \@ARGV ) { $settings{action} = "restart"; }
+    }
+    if ($#thisproc) {
+
+        foreach my $pid (@thisproc) {
+            if ( $$ != $pid ) {
+                given ( $settings{action} ) {
+                    when ( undef ) {}
+                    when (/(^start)|(status)/) {
+
+                        print "fsproj is already running.\n";
+                        print "More help: fsproj --help\n" if $_ eq "status";
+                        exit;
+                    }
+                    when (/stop/) {
+                        &FSProj::Main::ActionHandle( 'KILL', $pid );
+                        exit;
+                    }
+                    when (/restart/) {
+                        &FSProj::Main::ActionHandle( 'KILL', $pid );
+                    }
+                }
+            }
+        }
+
+    }
+    else {
+        given ( $settings{action} ) {
+            when ( undef) {}
+            when (/(stop)|(status)/) {
+                print "fsproj is not running yet.\n";
+                exit;
+
+            }
+        }
+    }
+
     my %tempsets;
     my @dprocs;
     my @aprocs;
-    &Config::readconf();
+    &FSProj::Config::readconf();
     GetOptions(
         \%tempsets,
         'timeout=i',
@@ -107,65 +166,54 @@ sub ARGVparse {
             );
         },
         'disable' => sub { $tempsets{enable} = 0 },
-        'process-list' => sub { &Config::FSPlist },
+        'process-list' => sub { &FSProj::Config::FSPlist },
 
     );
 
-    foreach my $key ( keys %tempsets ) {
-        $settings{$key} = $tempsets{$key};
+    foreach ( keys %tempsets ) {
+        $settings{$_} = $tempsets{$_};
     }
-    $settings{regex} = &Config::FSProcHandle( \@aprocs, \@dprocs )
-    if ( @aprocs or @dprocs );
-    $settings{action} = "save";
-    if (@ARGV) {
-        $settings{action} = pop @ARGV if ( "start" ~~ @ARGV || "stop" ~~ @ARGV );
-    }
-    &Config::writeconf() unless $settings{action} eq "stop";
+    $settings{regex} = &FSProj::Config::FSProcHandle( \@aprocs, \@dprocs )
+      if @aprocs
+          or @dprocs;
+    &FSProj::Config::writeconf() unless $settings{action} eq "stop";
     $TQEnable->enqueue(1) if $settings{enable};
-} 
+}
 
 1;
-package Logic;
+
+package FSProj::Logic;
 use Net::DBus;
-use Proc::ProcessTable;
 $| = 1;
 my $ON  = 'xset +dpms';
 my $OFF = 'xset -dpms';
 
 sub ScreenSaver {
     my $command;
-    foreach ( @{ 'Proc::ProcessTable'->new->table; } ) {
-        if ( $_->cmndline =~ /xscreensaver/ ) {
-            $command = qq(system "xscreensaver-command -deactivate");
-        }
-
-        elsif ( $_->cmndline =~ /krunner/ ) {
-            $command =
-qq(Net::DBus->session->get_service("org.freedesktop.ScreenSaver")->get_object('/ScreenSaver')->SimulateUserActivity());
-        }
-
-        elsif ( $_->cmndline =~ /gnome-screensaver/ ) {
-            $command =
-qq(Net::DBus->session->get_service("org.gnome.ScreenSaver")->get_object('/')->SimulateUserActivity());
-        }
-    }
+    $command = q[system "xscreensaver-command -deactivate"] if &FSProj::Utils::processlist(qr"xscreensaver");
+    $command = q[Net::DBus->session->get_service("org.freedesktop.ScreenSaver")->get_object('/ScreenSaver')->SimulateUserActivity()] if &FSProj::Utils::processlist(qr"krunner");
+    $command = q[Net::DBus->session->get_service("org.gnome.ScreenSaver")->get_object('/')->SimulateUserActivity()] if &FSProj::Utils::processlist(qr"gnome-screensaver");
     return sub {
-        while (1) {
-            my $timeout=$settings{timeout};
-            if ( $TQScrSvr->pending ) {
-                $timeout=$TQScrSvr->peek();
-                eval $command;
-                if ($@) { warn $@; }
+        if (defined $command) {
+            while (1) {
+                my $timeout = $settings{timeout};
+                if ( $TQScrSvr->pending ) {
+                    $timeout = $TQScrSvr->peek;
+                    eval $command;
+                    if ($@) {
+                        warn $@;
+                    }
+                }
+                sleep $timeout;
             }
-            sleep $timeout;
         }
-      }
+    };
 }
 
 sub CheckDPMS {
     my $DPMSPhrase = "DPMS is";
     chomp( my $state =
-          ( qx|xset q \| grep "$DPMSPhrase" | =~ s/^\s+$DPMSPhrase\s+//r ) );
+          qx|xset q \| grep "$DPMSPhrase" | =~ s/^\s+$DPMSPhrase\s+//r );
     return $state eq "Enabled";
 }
 
@@ -174,20 +222,13 @@ sub ProjLoop {
     my @processes;
     while (1) {
         my ($winid) = $TQWinID->peek;
-        while ( $TQWinID->pending() ) {
-            $TQWinID->dequeue();
+        while ( $TQWinID->pending ) {
+            $TQWinID->dequeue;
         }
 
-        while ( !$TQWinID->pending() ) {
-
-            @processes = ();
-            foreach ( @{ 'Proc::ProcessTable'->new->table; } ) {
-                if ( $_->cmndline =~ /$settings{regex}/ ) {
-                    push @processes, $_->pid;
-                }
-            }
-            if ( ( qx#xprop -id $winid _NET_WM_PID# =~ s/[^\d]+//r ) ~~
-                @processes
+        until ( $TQWinID->pending ) {
+            @processes = &FSProj::Utils::processlist( $settings{regex} );
+            if ( qx#xprop -id $winid _NET_WM_PID# =~ s/[^\d]+//r ~~ \@processes
                 and qx|xprop -id $winid _NET_WM_STATE| =~
                 /_NET_WM_STATE_FULLSCREEN/ )
             {
@@ -210,7 +251,7 @@ sub ProjLoop {
 sub XWinID {
     open XPROP, 'xprop -spy -root _NET_ACTIVE_WINDOW |';
     while (<XPROP>) {
-        if($TQEnable->pending()) {
+        if ( $TQEnable->pending ) {
             my $winid = s/.*?\# (.*)/$1/r;
             chomp $winid;
             $TQWinID->enqueue($winid);
@@ -218,8 +259,8 @@ sub XWinID {
     }
 }
 1;
-package FSProj;
-use Proc::ProcessTable;
+
+package FSProj::Main;
 
 sub ActionHandle {
     my ( $signal, $pid ) = @_;
@@ -229,13 +270,17 @@ sub ActionHandle {
 
 sub RunMainLoop {
 
-    &Config::daemonize;
-    threads->create( \&Logic::XWinID )->detach();
-    threads->create(&Logic::ScreenSaver)->detach();
-    threads->create( \&Logic::ProjLoop )->join();
-
+    unless (shift) {
+        &FSProj::Utils::daemonize;
+        threads->create( \&FSProj::Logic::XWinID )->detach;
+        threads->create(&FSProj::Logic::ScreenSaver)->detach;
+        threads->create( \&FSProj::Logic::ProjLoop )->join;
+    }
 }
-if (@ARGV) { &Config::ARGVparse(); }
+
+if (@ARGV) {
+    &FSProj::Config::ARGVparse();
+}
 else {
     &Pod::Usage::pod2usage(
         -verbose  => 99,
@@ -243,16 +288,7 @@ else {
     );
 }
 
-foreach ( @{ 'Proc::ProcessTable'->new->table; } ) {
-    if ( ( $_->cmndline =~ /perl.*fsproj/ ) and ( $_->pid != $$ ) ) {
-        &FSProj::ActionHandle( 'KILL', $_->pid );
-        exit if $settings{action} eq "stop";
-        print $settings{action};
-        $settings{action}="start";
-    }
-}
-exit if $settings{action} ne "start";
-&FSProj::RunMainLoop();
+&FSProj::Main::RunMainLoop( $settings{gui} );
 
 __END__
 
@@ -268,7 +304,7 @@ fsproj [options] <action>
 
 Actions:
 
-B<start stop>
+B<start stop restart status>
 
 Options:
 
@@ -356,7 +392,7 @@ Delete process from tracking.
 
 =item B<start> 
 
-Starts the script, if not started yet, and  sets the specified options.
+Starts the script and  sets the specified options.
 
 =back
 
@@ -368,8 +404,23 @@ Stops the script. All options will be ignored.
 
 =back 
 
-Any other arguments will be ignored. If neither B<start> nor B<stop> arguments are applied, the script saves parameters; if it was already running, restarts the utility.
+=over 8
 
+=item B<status>  
+
+Shows current status of the script.
+
+=back 
+
+=over 8
+
+=item B<restart>  
+
+Restarts the script.
+
+=back 
+
+Any other arguments will be ignored. 
 
 =head1 DESCRIPTION
 
@@ -392,7 +443,7 @@ Runs brief help and exit.
 
 =item C<fsproj start>
 
-Starts or restarts the utility with previous configuration.
+Starts the utility with previous configuration.
 
 =back
 
@@ -408,16 +459,16 @@ Stops the utility.
 
 =item C<fsproj --timeout 10 start>
 
-Starts or restarts the utility, with changed timeout and saves this timeout to config.
+Starts the utility with changed timeout and saves this timeout to config.
 
 =back
 
 
 =over 8
 
-=item C<fsproj --add-proc totem --del-proc mplayer vlc start>
+=item C<fsproj --add-proc totem --del-proc mplayer vlc restart>
 
-Starts or restarts the utility, removing mplayer and vlc from tracking list and adding totem to it. All changes are saved to config. 
+Restarts the utility, removing mplayer and vlc from tracking list and adding totem to it. All changes are saved to config. 
 
 =back
 
@@ -438,16 +489,6 @@ Add WxWidgets GUI for easy use by novice users. Implemented, but bugged and not 
 Shows info about currently tracked processes and exits. 
 
 =back
-
-
-=over 8
-
-=item C<fsproj --disable>
-
-Disables processing if started and saves this parameter to config file. It won't start script if it wasn't running. If script is running, this command don't stop it, it will wait until C<fsproj --enable> or C<fsproj stop>.
-
-=back
-
 
 =head1 AUTHOR
 
