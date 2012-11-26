@@ -106,6 +106,26 @@ sub FSPlist {
 }
 
 sub ARGVparse {
+    &FSProj::Config::readconf();
+    my %tempsets;
+    my @dprocs;
+    my @aprocs;
+   GetOptions(
+        \%tempsets,
+        'timeout=i',
+        'gui!', 'enable',
+        'add-proc=s{,}' => \@aprocs,
+        'del-proc=s{,}' => \@dprocs,
+        'help'          => sub {
+            &Pod::Usage::pod2usage(
+                -verbose  => 99,
+                -sections => "NAME|SYNOPSIS|OPTIONS|ARGUMENTS"
+            );
+        },
+        'disable' => sub { $tempsets{enable} = 0 },
+        'process-list' => sub { &FSProj::Config::FSPlist },
+
+    );
     my @thisproc = &FSProj::Utils::processlist;
     given (@ARGV) {
 
@@ -113,6 +133,7 @@ sub ARGVparse {
         when ( "status"  ~~ \@ARGV ) { $settings{action} = "status"; }
         when ( "start"   ~~ \@ARGV ) { $settings{action} = "start"; }
         when ( "restart" ~~ \@ARGV ) { $settings{action} = "restart"; }
+        default {$settings{action} = "restart"; }   
     }
     if ($#thisproc) {
 
@@ -131,7 +152,7 @@ sub ARGVparse {
                         exit;
                     }
                     when (/restart/) {
-                        &FSProj::Main::ActionHandle( 'KILL', $pid );
+                        &FSProj::Main::ActionHandle( 'KILL', $pid ); 
                     }
                 }
             }
@@ -148,28 +169,6 @@ sub ARGVparse {
             }
         }
     }
-
-    my %tempsets;
-    my @dprocs;
-    my @aprocs;
-    &FSProj::Config::readconf();
-    GetOptions(
-        \%tempsets,
-        'timeout=i',
-        'gui!', 'enable',
-        'add-proc=s{,}' => \@aprocs,
-        'del-proc=s{,}' => \@dprocs,
-        'help'          => sub {
-            &Pod::Usage::pod2usage(
-                -verbose  => 99,
-                -sections => "NAME|SYNOPSIS|OPTIONS|ARGUMENTS"
-            );
-        },
-        'disable' => sub { $tempsets{enable} = 0 },
-        'process-list' => sub { &FSProj::Config::FSPlist },
-
-    );
-
     foreach ( keys %tempsets ) {
         $settings{$_} = $tempsets{$_};
     }
