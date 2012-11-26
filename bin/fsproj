@@ -269,12 +269,12 @@ sub ActionHandle {
 
 sub RunMainLoop {
 
-    unless (shift) {
+   # unless (shift) {
         &FSProj::Utils::daemonize;
         threads->create( \&FSProj::Logic::XWinID )->detach;
         threads->create(&FSProj::Logic::ScreenSaver)->detach;
         threads->create( \&FSProj::Logic::ProjLoop )->join;
-    }
+    #}
 }
 
 if (@ARGV) {
