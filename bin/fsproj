@@ -200,7 +200,6 @@ q[Net::DBus->session->get_service("org.freedesktop.ScreenSaver")->get_object('/S
 q[Net::DBus->session->get_service("org.gnome.ScreenSaver")->get_object('/')->SimulateUserActivity()]
       if &FSProj::Utils::processlist(qr"gnome-screensaver");
 
-    print "Command is \'$command\'\n";
     return sub {
         if ( defined $command ) {
             while (1) {
@@ -208,7 +207,6 @@ q[Net::DBus->session->get_service("org.gnome.ScreenSaver")->get_object('/')->Sim
                 if ( $TQScrSvr->pending ) {
                     $timeout = $TQScrSvr->peek;
                     eval $command;
-                    print "Evaluating command\n";
                     if ($@) {
                         warn $@;
                     }
