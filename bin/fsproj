@@ -365,7 +365,7 @@ sub OnExit {
     my $self = shift;
     $settings{enable} = $self->{state};
     &FSProj::Config::writeconf;
-    #$self->{stdlg}->Destroy();
+    $self->{stdlg}->Destroy();
     #$self->{tbi}->Destroy();
     #$self->{popmenu}->Destroy();
 }
@@ -380,7 +380,6 @@ sub OnInit {
     $self->{popmenu} = Wx::Menu->new();
     $self->OnSwState( $self->{state} );
     $self->MenuGen( $self->{state} );
-    $self->{stdlg}->ShowModal;
     $self->{tbi}->Connect(
         -1, -1,
         &Wx::wxEVT_TASKBAR_LEFT_DOWN,
@@ -407,6 +406,8 @@ sub MenuGen {
     my ( $this, $state ) = @_;
     $this->{popmenu}->Append( $ID_SETTINGS, "Settings..." );
     $this->{popmenu}->AppendSeparator();
+    $this->{popmenu}->Append(&Wx::wxID_ABOUT, "");
+    $this->{popmenu}->AppendSeparator();
     $this->{popmenu}->Append( $ID_EXIT, "Exit\tCtrl-X" );
     $this->{popmenu}->Connect(
         $ID_EXIT, -1,
@@ -415,6 +416,20 @@ sub MenuGen {
             $this->ExitMainLoop();
         }
     );
+$this->{popmenu}->Connect(
+        &Wx::wxID_ABOUT, -1,
+        &Wx::wxEVT_COMMAND_MENU_SELECTED,
+        sub {
+            my $abdialog = Wx::AboutDialogInfo->new();
+            $abdialog->SetName("FullScreenProj.pl");
+            $abdialog->SetVersion ("$VERSION");
+            $abdialog->SetDescription ("Crazy Fullscreen Detector & Screensaver Disabler");
+            $abdialog->SetCopyright('©2012, Igor Gritsenko <xenomorph@mail.univ.kiev.ua>');
+            $abdialog->SetWebSite ("http://github/drone-pl/FullScreenProj.pl", "GitHub Repository");
+           Wx::AboutBox($abdialog); 
+        }
+    );
+
     $this->{popmenu}->Connect(
         $ID_SETTINGS,
         -1,
@@ -450,7 +465,7 @@ sub ActionHandle {
 }
 
 sub RunMainLoop {
-    #&FSProj::Utils::daemonize;
+    &FSProj::Utils::daemonize;
     if (shift) {
         my $app = FSProj::GUI->new;
         $app->MainLoop;
