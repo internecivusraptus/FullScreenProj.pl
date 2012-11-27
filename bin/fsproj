@@ -71,7 +71,7 @@ sub readconf {
     }
     else {
         $settings{regex}   = qr/(libflash)/;
-        $settings{timeout} = 50;
+        $settings{timeout} = 5;
         $settings{gui}     = 0;
         $settings{enable}  = 1;
         $settings{action}  = "start";
@@ -110,7 +110,7 @@ sub FSPlist {
 sub ARGVparse {
     &FSProj::Config::readconf();
     my %tempsets;
-    my @dprocs=qw/start status restart stop/;
+    my @dprocs = qw/start status restart stop/;
     my @aprocs;
     GetOptions(
         \%tempsets,
@@ -184,10 +184,10 @@ sub ARGVparse {
 1;
 
 package FSProj::Logic;
+
 use Net::DBus;
+
 $| = 1;
-my $ON  = 'xset +dpms';
-my $OFF = 'xset -dpms';
 
 sub ScreenSaver {
     my $command;
@@ -199,6 +199,8 @@ q[Net::DBus->session->get_service("org.freedesktop.ScreenSaver")->get_object('/S
     $command =
 q[Net::DBus->session->get_service("org.gnome.ScreenSaver")->get_object('/')->SimulateUserActivity()]
       if &FSProj::Utils::processlist(qr"gnome-screensaver");
+
+    print "Command is \'$command\'\n";
     return sub {
         if ( defined $command ) {
             while (1) {
@@ -206,6 +208,7 @@ q[Net::DBus->session->get_service("org.gnome.ScreenSaver")->get_object('/')->Sim
                 if ( $TQScrSvr->pending ) {
                     $timeout = $TQScrSvr->peek;
                     eval $command;
+                    print "Evaluating command\n";
                     if ($@) {
                         warn $@;
                     }
@@ -224,6 +227,9 @@ sub CheckDPMS {
 }
 
 sub ProjLoop {
+
+    my $ON        = 'xset +dpms';
+    my $OFF       = 'xset -dpms';
     my $DPMSstate = &CheckDPMS;
     my @processes;
     while (1) {
@@ -231,7 +237,6 @@ sub ProjLoop {
         while ( $TQWinID->pending ) {
             $TQWinID->dequeue;
         }
-
         until ( $TQWinID->pending ) {
             @processes = &FSProj::Utils::processlist( $settings{regex} );
             if ( qx#xprop -id $winid _NET_WM_PID# =~ s/[^\d]+//r ~~ \@processes
@@ -278,7 +283,7 @@ sub new {
     $title  = ""                unless defined $title;
     $pos    = wxDefaultPosition unless defined $pos;
     my @processes = &FSProj::Utils::regexp2array( $settings{regex} );
-    my $height    = 340 ;
+    my $height    = 340;
     $size = [ 220, $height ];
     $name = "" unless defined $name;
     $style = wxDEFAULT_DIALOG_STYLE;
@@ -301,10 +306,11 @@ sub new {
     $self->{fsprlistview} = Wx::ListView->new(
         $self, -1,
         [ 10,  90 ],
-        [ 200,  $height-180],
-        wxLC_REPORT | wxLC_SINGLE_SEL 
+        [ 200, $height - 180 ],
+        wxLC_REPORT | wxLC_SINGLE_SEL
     );
-    $self->{fsprlistview}->InsertColumn( 0, "Existing process list", wxLIST_FORMAT_LEFT, 200);
+    $self->{fsprlistview}
+      ->InsertColumn( 0, "Existing process list", wxLIST_FORMAT_LEFT, 200 );
     my $count = 0;
 
     foreach (@processes) {
@@ -316,16 +322,20 @@ sub new {
 
     $self->{btn_add}->Connect(
         -1, -1,
-        &Wx::wxEVT_COMMAND_BUTTON_CLICKED, sub {
-    my $dialog = Wx::TextEntryDialog->new
-    ( $self, "Enter process name", "Wx::TextEntryDialog sample",
-      "" );
+        &Wx::wxEVT_COMMAND_BUTTON_CLICKED,
+        sub {
+            my $dialog = Wx::TextEntryDialog->new(
+                $self,
+                "Enter process name",
+                "Wx::TextEntryDialog sample", ""
+            );
 
-  if( $dialog->ShowModal == wxID_OK ) {
-    $self->{fsprlistview}->InsertStringItem( $count++, $dialog->GetValue  );
+            if ( $dialog->ShowModal == wxID_OK ) {
+                $self->{fsprlistview}
+                  ->InsertStringItem( $count++, $dialog->GetValue );
 
-  } 
-        }
+            }
+          }
 
     );
 
@@ -333,13 +343,15 @@ sub new {
       Wx::Button->new( $self, wxID_DELETE, "", [ 119, $height - 80 ] );
     $self->{btn_del}->Connect(
         -1, -1,
-        &Wx::wxEVT_COMMAND_BUTTON_CLICKED, sub { my $item=$self->{fsprlistview}->GetFocusedItem;
-    if ( $self->{fsprlistview}->IsSelected($item)) {
-        $self->{fsprlistview}->DeleteItem($item);
-    }
-}
+        &Wx::wxEVT_COMMAND_BUTTON_CLICKED,
+        sub {
+            my $item = $self->{fsprlistview}->GetFocusedItem;
+            if ( $self->{fsprlistview}->IsSelected($item) ) {
+                $self->{fsprlistview}->DeleteItem($item);
+                $count--;
+            }
+        }
     );
-
 
     $self->{btn_Ok} =
       Wx::Button->new( $self, wxID_OK, "", [ 17, $height - 40 ] );
@@ -366,8 +378,6 @@ sub OnExit {
     $settings{enable} = $self->{state};
     &FSProj::Config::writeconf;
     $self->{stdlg}->Destroy();
-    #$self->{tbi}->Destroy();
-    #$self->{popmenu}->Destroy();
 }
 
 sub OnInit {
@@ -391,6 +401,9 @@ sub OnInit {
     );
     $self->{tbi}->Connect( -1, -1, &Wx::wxEVT_TASKBAR_RIGHT_DOWN,
         sub { $self->{tbi}->PopupMenu( $self->{popmenu} ); } );
+    threads->create( \&FSProj::Logic::XWinID )->detach;
+    threads->create(&FSProj::Logic::ScreenSaver)->detach;
+    threads->create( \&FSProj::Logic::ProjLoop )->detach;
     return 1;
 }
 
@@ -398,6 +411,12 @@ sub OnSwState {
     my ( $this, $state ) = @_;
     my $path = $thispath . "/share/icons/fsproj";
     $tip = $state ? "Enabled" : "Disabled";
+    if ($state) {
+        $TQEnable->enqueue(1) unless $TQEnable->pending;
+    }
+    else {
+        $TQEnable->dequeue if $TQEnable->pending;
+    }
     $this->{tbicon}->LoadFile( "$path/$tip.xpm", &Wx::wxBITMAP_TYPE_XPM );
     $this->{tbi}->SetIcon( $this->{tbicon}, $tip );
 }
@@ -406,7 +425,7 @@ sub MenuGen {
     my ( $this, $state ) = @_;
     $this->{popmenu}->Append( $ID_SETTINGS, "Settings..." );
     $this->{popmenu}->AppendSeparator();
-    $this->{popmenu}->Append(&Wx::wxID_ABOUT, "");
+    $this->{popmenu}->Append( &Wx::wxID_ABOUT, "" );
     $this->{popmenu}->AppendSeparator();
     $this->{popmenu}->Append( $ID_EXIT, "Exit\tCtrl-X" );
     $this->{popmenu}->Connect(
@@ -416,17 +435,21 @@ sub MenuGen {
             $this->ExitMainLoop();
         }
     );
-$this->{popmenu}->Connect(
-        &Wx::wxID_ABOUT, -1,
+    $this->{popmenu}->Connect(
+        &Wx::wxID_ABOUT,
+        -1,
         &Wx::wxEVT_COMMAND_MENU_SELECTED,
         sub {
             my $abdialog = Wx::AboutDialogInfo->new();
             $abdialog->SetName("FullScreenProj.pl");
-            $abdialog->SetVersion ("$VERSION");
-            $abdialog->SetDescription ("Crazy Fullscreen Detector & Screensaver Disabler");
-            $abdialog->SetCopyright('©2012, Igor Gritsenko <xenomorph@mail.univ.kiev.ua>');
-            $abdialog->SetWebSite ("http://github/drone-pl/FullScreenProj.pl", "GitHub Repository");
-           Wx::AboutBox($abdialog); 
+            $abdialog->SetVersion("$VERSION");
+            $abdialog->SetDescription(
+                "Crazy Fullscreen Detector & Screensaver Disabler");
+            $abdialog->SetCopyright(
+                '©2012, Igor Gritsenko <xenomorph@mail.univ.kiev.ua>');
+            $abdialog->SetWebSite( "http://github/drone-pl/FullScreenProj.pl",
+                "GitHub Repository" );
+            Wx::AboutBox($abdialog);
         }
     );
 
@@ -438,14 +461,19 @@ $this->{popmenu}->Connect(
             if ( $this->{stdlg}->ShowModal == &Wx::wxID_OK ) {
                 $settings{timeout} = $this->{stdlg}->{timeout}->GetValue;
                 $settings{enable}  = $this->{stdlg}->{fsenable}->GetValue;
-                my @list=();
-                for (my $i=0;$i<$this->{stdlg}->{fsprlistview}->GetItemCount;$i++)
-                {   
-                    push @list, $this->{stdlg}->{fsprlistview}->GetItem($i)->GetText;
+                my @list = ();
+                for (
+                    my $i = 0 ;
+                    $i < $this->{stdlg}->{fsprlistview}->GetItemCount ;
+                    $i++
+                  )
+                {
+                    push @list,
+                      $this->{stdlg}->{fsprlistview}->GetItem($i)->GetText;
                 }
 
                 $settings{regex} = &FSProj::Utils::array2regexp(@list);
-                $this->{state}     = $settings{enable};
+                $this->{state} = $settings{enable};
                 $this->OnSwState( $this->{state} );
                 &FSProj::Config::writeconf();
             }
@@ -465,7 +493,8 @@ sub ActionHandle {
 }
 
 sub RunMainLoop {
-    &FSProj::Utils::daemonize;
+
+    #&FSProj::Utils::daemonize;
     if (shift) {
         my $app = FSProj::GUI->new;
         $app->MainLoop;
