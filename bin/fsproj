@@ -492,7 +492,7 @@ sub ActionHandle {
 
 sub RunMainLoop {
 
-    #&FSProj::Utils::daemonize;
+    &FSProj::Utils::daemonize;
     if (shift) {
         my $app = FSProj::GUI->new;
         $app->MainLoop;
