@@ -1,4 +1,22 @@
 #!/usr/bin/env perl
+=pod
+
+=head1 NAME
+
+fsproj - Crazy Fullscreen Detector & Screensaver Disabler
+
+=head1 AUTHOR
+
+Igor Gritsenko <xenomorph@mail.univ.kiev.ua>
+
+=head1 COPYRIGHT
+
+Copyright (c) 2012 Igor Gritsenko <xenomorph@mail.univ.kiev.ua>
+
+This program is free software; you can redistribute it and/or
+                modify it under the same terms as Perl itself.
+
+=cut
 
 use v5.10;
 use threads ( 'exit' => 'threads_only' );
@@ -67,6 +85,7 @@ sub daemonize {
 
 package FSProj::Config;
 use File::HomeDir;
+use File::Copy qw/cp/;
 use Getopt::Long;
 use Pod::Usage;
 
@@ -87,11 +106,8 @@ sub readconf {
         close CONFIG;
     }
     else {
-        $settings{regex}   = qr/(libflash)/;
-        $settings{timeout} = 5;
-        $settings{gui}     = 0;
-        $settings{enable}  = 1;
-        &writeconf;
+        &File::Copy::cp($thispath."/share/doc/fullscreenprojpl/fsproj.conf",$conffile);
+        &FSProj::Config::readconf;
     }
 }
 
@@ -109,7 +125,7 @@ sub FSProcHandle {
     my %unproc   = ();
     my @currproc = ();
     &FSProj::Utils::regexp2array( \$settings{regex}, \@currproc );
-    foreach ( @curproc, @$aproc ) {
+    foreach ( @currproc, @$aproc ) {
         $unproc{$_} = 1;
     }
     delete $unproc{$_} foreach (@$dproc);
@@ -140,6 +156,22 @@ sub ARGVparse {
     my $action;
     my @dprocs = qw/start status restart stop/;
     my @aprocs;
+
+=head1 SYNOPSIS
+
+fsproj [options] <action>
+
+Actions:
+
+B<start stop restart status>
+
+Options:
+
+B<[--help] [--no-gui] [--gui] [--timeout seconds] [--disable] [--enable] [--process-list] [--add-proc process1 process2 process3 ...] [--del-proc process1 process2 process3 ...] [--version] [--debug]>
+
+Use --help for more information.
+
+=cut
     GetOptions(
         \%tempsets,
         'timeout=i',
@@ -591,27 +623,10 @@ else {
 }
 &FSProj::Main::RunMainLoop( $settings{gui} );
 &FSProj::Main::ActionHandle( 'TERM', -$$ );
+
+
 __END__
 
-=pod
-
-=head1 NAME
-
-fsproj - Crazy Fullscreen Detector & Screensaver Disabler
-
-=head1 SYNOPSIS
-
-fsproj [options] <action>
-
-Actions:
-
-B<start stop restart status>
-
-Options:
-
-B<[--help] [--no-gui] [--gui] [--timeout seconds] [--disable] [--enable] [--process-list] [--add-proc process] [--del-proc process]>
-
-Use --help for more information.
 
 =head1 OPTIONS
 
@@ -620,6 +635,22 @@ Use --help for more information.
 =item B<--help>
 
 Verbose description of command line options.
+
+=back
+
+=over 8
+
+=item B<--version>
+
+Shows current version.
+
+=back
+
+=over 8
+
+=item B<--debug>
+
+Prints a lot of info to terminal, don't use it unless debugging ;)
 
 =back
 
@@ -635,7 +666,7 @@ Do not use the GUI (Default).
 
 =item B<--gui>
 
-Enable WxWidgets GUI.
+Enable WxWidgets GUI. They are working currently almost perfect.
 
 =back
 
@@ -675,7 +706,7 @@ Show current tracking process list.
 
 =item B<--add-proc process>
 
-Add process for tracking.
+Add process for tracking. There could be more than one process.
 
 =back
 
@@ -683,7 +714,7 @@ Add process for tracking.
 
 =item B<--del-proc process>
 
-Delete process from tracking.
+Delete process from tracking. There could be more than one process.
 
 =back
 
@@ -727,7 +758,7 @@ Any other arguments will be ignored.
 
 I<FullScreenProj.pl> a.k.a I<fsproj> is a small utility that detects various videoplayers in fullscreen mode and allows users to disable screensaver and/or screen power off via DPMS. Users can control its behaviour via command line.
 
-Default timeout is set to 50 seconds, default process list includes vlc, mplayer, and flash plugin. 
+Default timeout is set to 5 seconds, default process list includes vlc, mplayer, and flash plugin. 
 Settings that were changed via command line, are saved in config file, thus they could be used for further usage. See L</EXAMPLES> for more info.
 
 =head1 EXAMPLES
@@ -778,7 +809,7 @@ Restarts the utility, removing mplayer and vlc from tracking list and adding tot
 
 =item C<fsproj --gui start>
 
-Add WxWidgets GUI for easy use by novice users. Implemented, but bugged and not currently integrated in utility.
+Add WxWidgets GUI for easy use by novice users. It consist of tray icon and settings dialog box.
 
 =back
 
@@ -790,16 +821,5 @@ Add WxWidgets GUI for easy use by novice users. Implemented, but bugged and not 
 Shows info about currently tracked processes and exits. 
 
 =back
-
-=head1 AUTHOR
-
-Igor Gritsenko <xenomorph@mail.univ.kiev.ua>
-
-=head1 COPYRIGHT
-
-Copyright (c) 2012 Igor Gritsenko <xenomorph@mail.univ.kiev.ua>
-
-This program is free software; you can redistribute it and/or
-                modify it under the same terms as Perl itself.
 
 =cut
