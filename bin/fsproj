@@ -1,4 +1,5 @@
 #!/usr/bin/env perl
+
 =pod
 
 =head1 NAME
@@ -9,35 +10,125 @@ fsproj - Crazy Fullscreen Detector & Screensaver Disabler
 
 Igor Gritsenko <xenomorph@mail.univ.kiev.ua>
 
-=head1 COPYRIGHT
-
-Copyright (c) 2012 Igor Gritsenko <xenomorph@mail.univ.kiev.ua>
-
-This program is free software; you can redistribute it and/or
-                modify it under the same terms as Perl itself.
-
 =cut
 
-use v5.10;
-use threads ( 'exit' => 'threads_only' );
+use 5.14.0;
+use threads;
 use threads::shared;
-use Thread::Queue;
-use Proc::ProcessTable;
-use Cwd qw/abs_path/;
 
 our $VERSION  = 0.7;
 our %settings = ();
-our $TQWinID  = Thread::Queue->new();
-our $TQScrSvr = Thread::Queue->new();
-our $TQEnable = Thread::Queue->new();
-our $thispath = Cwd::abs_path($0) =~ s/(.*)\/.*\/.*/$1/r;
-our $DEBUG    = 0;
-our $EXIT :shared;
-$EXIT = 0;
-$|    = 1;
+
+our $DEBUG = 0;
+our $WinID : shared = 1;
+
+package FSProj::Logic;
+
+sub ScreenSaver {
+    my $command   = shift;
+    my %cmnd_hash = (
+        q[system "xscreensaver-command -deactivate"] => "xscreensaver",
+        q[  require Net::DBus;
+    Net::DBus->import;
+    Net::DBus->session->get_service("org.freedesktop.ScreenSaver")->get_object('/ScreenSaver')->SimulateUserActivity()]
+          => "krunner",
+        q[  require Net::DBus;
+    Net::DBus->import;
+    Net::DBus->session->get_service("org.gnome.ScreenSaver")->get_object('/')->SimulateUserActivity()]
+          => "gnome-screensaver"
+    );
+    while ( my ( $cmnd, $saver ) = each(%cmnd_hash) ) {
+        my @array_p = ();
+        &FSProj::Utils::processlist( $saver, \@array_p );
+        if (@array_p) { $$command = $cmnd; last; }
+        undef $cmnd;
+        undef $saver;
+        undef @array_p;
+    }
+    undef $command;
+}
+
+sub CheckDPMS {
+    my $retval     = shift;
+    my $DPMSPhrase = "DPMS is";
+    chomp( my $state =
+          qx|xset q \| grep "$DPMSPhrase" | =~ s/^\s+$DPMSPhrase\s+//r );
+    undef $DPMSPhrase;
+    $$retval = $state eq "Enabled";
+    undef $retval;
+}
+
+sub ProjLoop {
+    my $ScrSvr;
+    &FSProj::Logic::ScreenSaver( \$ScrSvr );
+    &FSProj::Utils::FSDebug( $ScrSvr . "\n" );
+    my $ON  = 'xset +dpms';
+    my $OFF = 'xset -dpms';
+    my $DPMSstate;
+    &CheckDPMS( \$DPMSstate );
+    my @processes;
+    my $winid;
+
+    while ($main::WinID) {
+        {
+            lock $main::WinID;
+            $winid       = $main::WinID;
+            $main::WinID = 0;
+        }
+        &FSProj::Utils::processlist( $settings{regex}, \@processes );
+        &FSProj::Utils::FSDebug(
+            $winid . "@" . @processes . "@" . $#processes . "\n" );
+        until ($main::WinID) {
+            if ( qx#xprop -id $winid _NET_WM_PID# =~ s/[^\d]+//r ~~ \@processes
+                and qx|xprop -id $winid _NET_WM_STATE| =~
+                /_NET_WM_STATE_FULLSCREEN/ )
+            {
+                FSProj::Utils::FSDebug(
+                    "We've got videoplayer in fullscreen mode!\n");
+                if ($ScrSvr) {
+                    FSProj::Utils::FSDebug(
+                        "Simulating user activity: " . $ScrSvr . "\n" );
+                    eval $ScrSvr;
+                    if ($@) {
+                        warn $@;
+                    }
+                }
+                system $OFF;
+            }
+            else {
+                system $ON if $DPMSstate;
+            }
+            sleep $settings{timeout};
+        }
+        undef @processes;
+        undef $winid;
+    }
+    threads->detach;
+    threads->exit;
+}
+
+sub XWinID {
+    open XPROP, 'xprop -spy -root _NET_ACTIVE_WINDOW |';
+    my $winid_p = -1;
+    while (<XPROP>) {
+        FSProj::Utils::FSDebug($_);
+        {
+            my $winid = s/.*?\# (.*)/$1/r;
+            chomp $winid;
+            lock $main::WinID;
+            $main::WinID = $winid if $winid and $winid_p ne $winid;
+            $winid_p = $winid;
+            undef $winid;
+        }
+    }
+    undef $winid_p;
+    close XPROP;
+    threads->detach;
+    threads->exit;
+}
+1;
 
 package FSProj::Utils;
-use POSIX ('setsid');
 
 sub FSDebug {
     print shift if $DEBUG;
@@ -58,6 +149,7 @@ sub array2regexp {
 }
 
 sub processlist {
+    require Proc::ProcessTable;
     my ( $cmndline, $retval ) = @_;
     foreach ( @{ 'Proc::ProcessTable'->new->table; } ) {
         if ( $_->cmndline =~ $cmndline ) {
@@ -70,29 +162,26 @@ sub processlist {
 }
 
 sub daemonize {
+    require POSIX;
     die "Can't chdir to /: $!" unless chdir '/';
     umask 0;
-
     die "Can't read /dev/null: $!"     unless open STDIN,  '/dev/null';
     die "Can't write to /dev/null: $!" unless open STDOUT, '>/dev/null';
     die "Can't write to /dev/null: $!" unless open STDERR, '>/dev/null';
     die "Can't fork: $!" unless defined( my $pid = fork );
     exit if $pid;
-    die "Can't start a new session: $!" unless setsid();
+    die "Can't start a new session: $!" unless &POSIX::setsid();
     undef $pid;
 }
+
 1;
 
 package FSProj::Config;
-use File::HomeDir;
-use File::Copy qw/cp/;
-use Getopt::Long;
-use Pod::Usage;
-
-my $conffile =
-  File::HomeDir::my_home() . "/.config/FullscreenProj.pl/fsproj.conf";
+my $conffile = eval("require File::HomeDir;  File::HomeDir::my_home();")
+  . "/.config/FullscreenProj.pl/fsproj.conf";
 
 sub readconf {
+    require File::Copy;
     if ( -e $conffile ) {
         open CONFIG, $conffile;
         while (<CONFIG>) {
@@ -106,13 +195,20 @@ sub readconf {
         close CONFIG;
     }
     else {
-        &File::Copy::cp($thispath."/share/doc/fullscreenprojpl/fsproj.conf",$conffile);
+        mkdir $conffile =~ s/fsproj.conf//r;
+        &File::Copy::cp(
+            (
+                ( eval { require Cwd; &Cwd::abs_path($0); } ) =~
+                  s/(.*)\/.*\/.*/$1/r
+            )
+            . "/share/doc/fullscreenprojpl/fsproj.conf",
+            $conffile
+        );
         &FSProj::Config::readconf;
     }
 }
 
 sub writeconf {
-    mkdir $conffile =~ s/fsproj.conf//r;
     open CONFIG, ">", $conffile;
     foreach ( keys %settings ) {
         print CONFIG $_ . " = " . $settings{$_} . "\n";
@@ -151,6 +247,9 @@ sub FSPlist {
 }
 
 sub ARGVparse {
+    use Getopt::Long;
+    use Pod::Usage;
+
     &FSProj::Config::readconf();
     my %tempsets;
     my $action;
@@ -167,15 +266,16 @@ B<start stop restart status>
 
 Options:
 
-B<[--help] [--no-gui] [--gui] [--timeout seconds] [--disable] [--enable] [--process-list] [--add-proc process1 process2 process3 ...] [--del-proc process1 process2 process3 ...] [--version] [--debug]>
+B<[--help] [--no-gui] [--gui] [--timeout seconds] [--process-list] [--add-proc process1 process2 process3 ...] [--del-proc process1 process2 process3 ...] [--version] [--debug]>
 
 Use --help for more information.
 
 =cut
+
     GetOptions(
         \%tempsets,
         'timeout=i',
-        'gui!', 'enable',
+        'gui!',
         'add-proc=s{,}' => \@aprocs,
         'del-proc=s{,}' => \@dprocs,
         'help'          => sub {
@@ -184,9 +284,13 @@ Use --help for more information.
                 -sections => "NAME|SYNOPSIS|OPTIONS|ARGUMENTS"
             );
         },
-        'disable' => sub { $tempsets{enable} = 0 },
         'process-list' => sub { &FSProj::Config::FSPlist },
-        'debug'        => sub { $DEBUG = 1; use warnings; use diagnostics; },
+        'debug'        => sub {
+            $DEBUG = 1;
+            use strict;
+            use warnings;
+            use diagnostics;
+        },
         'version' =>
           sub { print "FullScreenProj.pl version: " . $VERSION . "\n"; exit; },
 
@@ -246,127 +350,9 @@ Use --help for more information.
     undef @dprocs;
     &FSProj::Config::writeconf() unless $action eq "stop";
     undef $action;
-    $TQEnable->enqueue(1) if $settings{enable};
     undef @ARGV;
 }
 
-1;
-
-package FSProj::Logic;
-
-use Net::DBus;
-
-sub ScreenSaver {
-    my $command;
-    my %cmnd_hash = (
-        q[system "xscreensaver-command -deactivate"] => "xscreensaver",
-q[Net::DBus->session->get_service("org.freedesktop.ScreenSaver")->get_object('/ScreenSaver')->SimulateUserActivity()]
-          => "krunner",
-q[Net::DBus->session->get_service("org.gnome.ScreenSaver")->get_object('/')->SimulateUserActivity()]
-          => "gnome-screensaver"
-    );
-    while ( my ( $cmnd, $saver ) = each(%cmnd_hash) ) {
-        my @array_p = ();
-        &FSProj::Utils::processlist( $saver, \@array_p );
-        if (@array_p) { $command = $cmnd; last; }
-        undef $cmnd;
-        undef $saver;
-        undef @array_p;
-    }
-    return sub {
-
-        if ( defined $command ) {
-            FSProj::Utils::FSDebug( $command . "\n" );
-            my $timeout = $settings{timeout};
-            while (1) {
-                last if $EXIT;
-                if ( $TQScrSvr->pending ) {
-                    $timeout = $TQScrSvr->peek;
-                    FSProj::Utils::FSDebug(
-                        "Simulating user activity: " . $command . "\n" );
-                    eval $command;
-                    if ($@) {
-                        warn $@;
-                    }
-                }
-                sleep $timeout;
-            }
-            undef $timeout;
-        }
-        threads->detach;
-        threads->exit;
-    };
-    undef $command;
-}
-
-sub CheckDPMS {
-    my $retval     = shift;
-    my $DPMSPhrase = "DPMS is";
-    chomp( my $state =
-          qx|xset q \| grep "$DPMSPhrase" | =~ s/^\s+$DPMSPhrase\s+//r );
-    undef $DPMSPhrase;
-    $$retval = $state eq "Enabled";
-    undef $retval;
-}
-
-sub ProjLoop {
-
-    my $ON  = 'xset +dpms';
-    my $OFF = 'xset -dpms';
-    my $DPMSstate;
-    &CheckDPMS( \$DPMSstate );
-    my @processes;
-    while (1) {
-        last if $EXIT;
-        my ($winid) = $TQWinID->dequeue;
-        &FSProj::Utils::processlist( $settings{regex}, \@processes );
-        FSProj::Utils::FSDebug(
-            $winid . "@" . @processes . "@" . $#processes . "\n" );
-        until ( $TQWinID->pending ) {
-            if ( qx#xprop -id $winid _NET_WM_PID# =~ s/[^\d]+//r ~~ \@processes
-                and qx|xprop -id $winid _NET_WM_STATE| =~
-                /_NET_WM_STATE_FULLSCREEN/ )
-            {
-                FSProj::Utils::FSDebug(
-                    "We've got videoplayer in fullscreen mode!\n");
-                $TQScrSvr->enqueue( $settings{timeout} );
-                system $OFF;
-            }
-            else {
-                while ( $TQScrSvr->pending() ) {
-                    $TQScrSvr->dequeue();
-                }
-
-                system $ON if $DPMSstate;
-            }
-            sleep $settings{timeout};
-        }
-        undef @processes;
-        undef $winid;
-    }
-    threads->detach;
-    threads->exit;
-}
-
-sub XWinID {
-    open XPROP, 'xprop -spy -root _NET_ACTIVE_WINDOW |';
-    my $winid_p = -1;
-    while (<XPROP>) {
-        last if $EXIT;
-        FSProj::Utils::FSDebug($_);
-        if ( $TQEnable->pending ) {
-            my $winid = s/.*?\# (.*)/$1/r;
-            chomp $winid;
-            $TQWinID->enqueue($winid) if $winid and $winid_p ne $winid;
-            $winid_p = $winid;
-            undef $winid;
-        }
-    }
-    undef $winid_p;
-    close XPROP;
-    threads->detach;
-    threads->exit;
-}
 1;
 
 package FSProj::SettingsDialog;
@@ -388,11 +374,8 @@ sub new {
     $style = wxDEFAULT_DIALOG_STYLE;
     $self =
       $self->SUPER::new( $parent, $id, $title, $pos, $size, $style, $name );
-    $self->{fsenable} =
-      Wx::CheckBox->new( $self, -1, "Tracking enabled", [ 27, 10 ], );
-    $self->{fsenable}->SetValue( $settings{enable} );
     $self->{fsgui} =
-      Wx::CheckBox->new( $self, -1, "Use WxWidgets GUI", [ 27, 36 ], );
+      Wx::CheckBox->new( $self, -1, "Use WxWidgets GUI", [ 27, 30 ], );
     $self->{fsgui}->SetValue( $settings{gui} );
     $self->{tmlabel} =
       Wx::StaticText->new( $self, -1, "Timeout in seconds", [ 76, 66 ], );
@@ -467,65 +450,39 @@ sub new {
 package FSProj::GUI;
 
 use Wx;
-use Thread::Queue;
 use base 'Wx::App';
-my $tip;
-
-sub OnExit {
-    my $self = shift;
-    $settings{enable} = $self->{state};
-    &FSProj::Config::writeconf;
-    $EXIT = !$EXIT;
-    sleep 2;
-
-    #kill 9, -$$;
-}
 
 sub OnInit {
     my $self = shift;
-
-    $self->{state}   = $settings{enable};
     $self->{stdlg}   = FSProj::SettingsDialog->new();
     $self->{tbi}     = Wx::TaskBarIcon->new();
-    $self->{tbicon}  = Wx::Icon->new();
     $self->{popmenu} = Wx::Menu->new();
-    $self->OnSwState( $self->{state} );
-    $self->MenuGen( $self->{state} );
+    $self->{tbi}->SetIcon(
+        Wx::Icon->new(
+            (
+                ( eval { require Cwd; &Cwd::abs_path($0); } ) =~
+                  s/(.*)\/.*\/.*/$1/r
+            )
+            . "/share/icons/fsproj/Disabled.xpm",
+            &Wx::wxBITMAP_TYPE_XPM
+        ),
+        "FullScreenProj.pl"
+    );
+    $self->MenuGen;
     $self->{tbi}->Connect(
         -1, -1,
         &Wx::wxEVT_TASKBAR_LEFT_DOWN,
         sub {
-            $self->{state} = !$self->{state};
-            $self->{stdlg}->{fsenable}->SetValue( $self->{state} );
-            $self->OnSwState( $self->{state} );
+
         }
     );
     $self->{tbi}->Connect( -1, -1, &Wx::wxEVT_TASKBAR_RIGHT_DOWN,
         sub { $self->{tbi}->PopupMenu( $self->{popmenu} ); } );
-    $self->{winid_th}  = threads->create( \&FSProj::Logic::XWinID );
-    $self->{ssaver_th} = threads->create(&FSProj::Logic::ScreenSaver);
-    $self->{prloop_th} = threads->create( \&FSProj::Logic::ProjLoop );
-
-}
-
-sub OnSwState {
-    my ( $this, $state ) = @_;
-    my $path = $thispath . "/share/icons/fsproj";
-    $tip = $state ? "Enabled" : "Disabled";
-    if ($state) {
-        $TQEnable->enqueue(1) unless $TQEnable->pending;
-    }
-    else {
-        $TQEnable->dequeue if $TQEnable->pending;
-    }
-    $this->{tbicon}->LoadFile( "$path/$tip.xpm", &Wx::wxBITMAP_TYPE_XPM );
-    $this->{tbi}->SetIcon( $this->{tbicon}, $tip );
-    $settings{enable} = $state;
-    &FSProj::Config::writeconf();
+    return $self;
 }
 
 sub MenuGen {
-    my ( $this, $state ) = @_;
+    my $this = shift;
     $this->{popmenu}->Append( &Wx::wxID_PROPERTIES, "" );
     $this->{popmenu}->AppendSeparator();
     $this->{popmenu}->Append( &Wx::wxID_ABOUT, "" );
@@ -553,6 +510,9 @@ sub MenuGen {
                 '©2012, Igor Gritsenko <xenomorph@mail.univ.kiev.ua>');
             $abdialog->SetWebSite( "http://github/drone-pl/FullScreenProj.pl",
                 "GitHub Repository" );
+            $abdialog->SetDevelopers(
+                [ 'Igor Gritsenko aka Xenomorph', 'Dmitry "DarkneSS" Perlow' ]
+            );
             Wx::AboutBox($abdialog);
         }
     );
@@ -565,7 +525,6 @@ sub MenuGen {
             if ( $this->{stdlg}->ShowModal == &Wx::wxID_OK ) {
                 $settings{timeout} = $this->{stdlg}->{timeout}->GetValue;
                 $settings{gui}     = $this->{stdlg}->{fsgui}->GetValue;
-                $this->{state}     = $this->{stdlg}->{fsenable}->GetValue;
                 my @list = ();
                 for (
                     my $i = 0 ;
@@ -578,7 +537,7 @@ sub MenuGen {
                 }
 
                 &FSProj::Utils::array2regexp( \@list, \$settings{regex} );
-                $this->OnSwState( $this->{state} );
+                &FSProj::Config::writeconf();
             }
 
         }
@@ -592,7 +551,7 @@ package FSProj::Main;
 sub ActionHandle {
     my ( $signal, $pid ) = @_;
     FSProj::Utils::FSDebug( $signal . " fsproj PID:" . $pid . "\n" );
-    kill $signal => $pid;
+    kill $signal => -$pid;
     undef $signal;
     undef $pid;
 }
@@ -600,18 +559,22 @@ sub ActionHandle {
 sub RunMainLoop {
 
     &FSProj::Utils::daemonize unless $DEBUG;
+    my $winid_thr = threads->create( \&FSProj::Logic::XWinID );
+    my $ploop_thr = threads->create( \&FSProj::Logic::ProjLoop );
     if (shift) {
-        my $app = FSProj::GUI->new;
+        $winid_thr->detach;
+        $ploop_thr->detach;
+         my $app = FSProj::GUI->new;
         $app->MainLoop;
         undef $app;
     }
     else {
-        threads->create( \&FSProj::Logic::XWinID );      #->detach;
-        threads->create(&FSProj::Logic::ScreenSaver);    #->detach
-        &FSProj::Logic::ProjLoop;
+        $winid_thr->detach;
+        $ploop_thr->join;
     }
 }
 
+1;
 if (@ARGV) {
     &FSProj::Config::ARGVparse();
 }
@@ -622,11 +585,11 @@ else {
     );
 }
 &FSProj::Main::RunMainLoop( $settings{gui} );
-&FSProj::Main::ActionHandle( 'TERM', -$$ );
-
+&FSProj::Main::ActionHandle( 'TERM', $$ );
 
 __END__
 
+=pod
 
 =head1 OPTIONS
 
@@ -675,22 +638,6 @@ Enable WxWidgets GUI. They are working currently almost perfect.
 =item B<--timeout seconds>
 
 Set timeout in seconds.
-
-=back
-
-=over 8
-
-=item B<--disable>
-
-Start inactive script.
-
-=back
-
-=over 8
-
-=item B<--enable>
-
-Start script and activate it (Default). 
 
 =back
 
@@ -795,7 +742,6 @@ Starts the utility with changed timeout and saves this timeout to config.
 
 =back
 
-
 =over 8
 
 =item C<fsproj --add-proc totem --del-proc mplayer vlc restart>
@@ -803,7 +749,6 @@ Starts the utility with changed timeout and saves this timeout to config.
 Restarts the utility, removing mplayer and vlc from tracking list and adding totem to it. All changes are saved to config. 
 
 =back
-
 
 =over 8
 
@@ -813,7 +758,6 @@ Add WxWidgets GUI for easy use by novice users. It consist of tray icon and sett
 
 =back
 
-
 =over 8
 
 =item C<fsproj --process-list>
@@ -821,5 +765,12 @@ Add WxWidgets GUI for easy use by novice users. It consist of tray icon and sett
 Shows info about currently tracked processes and exits. 
 
 =back
+
+=head1 COPYRIGHT
+
+Copyright (c) 2012 Igor Gritsenko <xenomorph@mail.univ.kiev.ua>
+
+This program is free software; you can redistribute it and/or
+                modify it under the same terms as Perl itself.
 
 =cut
