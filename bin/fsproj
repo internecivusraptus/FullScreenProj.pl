@@ -1,4 +1,4 @@
-#!/usr/bin/env perl
+/usr/bin/env perl
 
 =pod
 
@@ -80,8 +80,8 @@ sub ProjLoop {
             $winid . "@" . @processes . "@" . $#processes . "\n" );
         until ($main::WinID) {
             if ( qx#xprop -id $winid _NET_WM_PID# =~ s/[^\d]+//r ~~ \@processes
-                and qx|xprop -id $winid _NET_WM_STATE| =~
-                /_NET_WM_STATE_FULLSCREEN/ )
+                and ( not ($settings{fullscreen}) or qx|xprop -id $winid _NET_WM_STATE| =~
+                /_NET_WM_STATE_FULLSCREEN/ ))
             {
                 FSProj::Utils::FSDebug(
                     "We've got videoplayer in fullscreen mode!\n");
@@ -266,7 +266,7 @@ B<start stop restart status>
 
 Options:
 
-B<[--help] [--no-gui] [--gui] [--timeout seconds] [--process-list] [--add-proc process1 process2 process3 ...] [--del-proc process1 process2 process3 ...] [--version] [--debug]>
+B<[--help|-h] [--no-gui] [--gui|-g] [--fullscreen|-f] [--no-fullscreen] [--timeout|-t seconds] [--process-list|-p] [--add-proc process1 process2 process3 ...] [--del-proc process1 process2 process3 ...] [--version|-v] [--debug]>
 
 Use --help for more information.
 
@@ -276,6 +276,7 @@ Use --help for more information.
         \%tempsets,
         'timeout=i',
         'gui!',
+        'fullscreen!',
         'add-proc=s{,}' => \@aprocs,
         'del-proc=s{,}' => \@dprocs,
         'help'          => sub {
@@ -374,8 +375,11 @@ sub new {
     $style = wxDEFAULT_DIALOG_STYLE;
     $self =
       $self->SUPER::new( $parent, $id, $title, $pos, $size, $style, $name );
-    $self->{fsgui} =
-      Wx::CheckBox->new( $self, -1, "Use WxWidgets GUI", [ 27, 30 ], );
+    $self->{fsfs} =
+      Wx::CheckBox->new( $self, -1, "Only fullscreen apps", [ 27, 6 ], );
+    $self->{fsfs}->SetValue( $settings{fullscreen} );
+     $self->{fsgui} =
+      Wx::CheckBox->new( $self, -1, "Use WxWidgets GUI", [ 27, 36 ], );
     $self->{fsgui}->SetValue( $settings{gui} );
     $self->{tmlabel} =
       Wx::StaticText->new( $self, -1, "Timeout in seconds", [ 76, 66 ], );
@@ -525,6 +529,7 @@ sub MenuGen {
             if ( $this->{stdlg}->ShowModal == &Wx::wxID_OK ) {
                 $settings{timeout} = $this->{stdlg}->{timeout}->GetValue;
                 $settings{gui}     = $this->{stdlg}->{fsgui}->GetValue;
+                $settings{fullscreen}     = $this->{stdlg}->{fsfs}->GetValue;
                 my @list = ();
                 for (
                     my $i = 0 ;
@@ -575,6 +580,7 @@ sub RunMainLoop {
 }
 
 1;
+
 if (@ARGV) {
     &FSProj::Config::ARGVparse();
 }
@@ -630,6 +636,22 @@ Do not use the GUI (Default).
 =item B<--gui>
 
 Enable WxWidgets GUI. They are working currently almost perfect.
+
+=back
+
+=over 8
+
+=item B<--no-fullscreen>
+
+Script works with both fullscreen and non-fullscreen applications. 
+
+=back
+
+=over 8
+
+=item B<--fullscreen>
+
+Script works only with fullscreen mode applications.
 
 =back
 
