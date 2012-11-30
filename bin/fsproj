@@ -1,4 +1,4 @@
-/usr/bin/env perl
+#!/usr/bin/env perl
 
 =pod
 
@@ -651,7 +651,7 @@ Script works with both fullscreen and non-fullscreen applications.
 
 =item B<--fullscreen>
 
-Script works only with fullscreen mode applications.
+Script works only with fullscreen applications.
 
 =back
 
