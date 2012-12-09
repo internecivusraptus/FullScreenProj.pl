@@ -16,10 +16,11 @@ use 5.14.0;
 use threads;
 use threads::shared;
 
-our $VERSION  = 0.7;
-our %settings = ();
+my $VERSION = 0.8;
+my %sethash : shared;
+my $settings : shared = \%sethash;
 
-our $DEBUG = 0;
+my $DEBUG = 0;
 our $WinID : shared = 1;
 
 package FSProj::Logic;
@@ -41,32 +42,28 @@ sub ScreenSaver {
         my @array_p = ();
         &FSProj::Utils::processlist( $saver, \@array_p );
         if (@array_p) { $$command = $cmnd; last; }
-        undef $cmnd;
-        undef $saver;
-        undef @array_p;
     }
-    undef $command;
 }
 
 sub CheckDPMS {
     my $retval     = shift;
     my $DPMSPhrase = "DPMS is";
     chomp( my $state =
-          qx|xset q \| grep "$DPMSPhrase" | =~ s/^\s+$DPMSPhrase\s+//r );
-    undef $DPMSPhrase;
+          qx|xset q \| grep "$DPMSPhrase" | =~ s/^\s+$DPMSPhrase\s+//gr );
     $$retval = $state eq "Enabled";
-    undef $retval;
 }
 
 sub ProjLoop {
     my $ScrSvr;
     &FSProj::Logic::ScreenSaver( \$ScrSvr );
-    &FSProj::Utils::FSDebug( $ScrSvr . "\n" );
+    &FSProj::Utils::FSDebug( "We've got that screensaver:" . $ScrSvr . "\n" )
+      if defined $ScrSvr;
     my $ON  = 'xset +dpms';
     my $OFF = 'xset -dpms';
     my $DPMSstate;
     &CheckDPMS( \$DPMSstate );
     my @processes;
+    my @fprocesses;
     my $winid;
 
     while ($main::WinID) {
@@ -74,17 +71,21 @@ sub ProjLoop {
             lock $main::WinID;
             $winid       = $main::WinID;
             $main::WinID = 0;
+            FSProj::Utils::FSDebug("We've changed main Winid to $main::WinID\n")
+              unless $main::WinID;
         }
-        &FSProj::Utils::processlist( $settings{regex}, \@processes );
-        &FSProj::Utils::FSDebug(
-            $winid . "@" . @processes . "@" . $#processes . "\n" );
+        &FSProj::Utils::processlist( $settings->{regex}, \@processes );
+        &FSProj::Utils::processlist( $settings->{fregex}, \@fprocesses );
+        &FSProj::Utils::FSDebug( $winid
+              . "@ @processes @"
+              . $#processes
+              . $settings->{timeout}
+              . "\n" );
         until ($main::WinID) {
-            if ( qx#xprop -id $winid _NET_WM_PID# =~ s/[^\d]+//r ~~ \@processes
-                and ( not ($settings{fullscreen}) or qx|xprop -id $winid _NET_WM_STATE| =~
-                /_NET_WM_STATE_FULLSCREEN/ ))
+            if ( ($settings->{fullscreen} and qx#xprop -id $winid _NET_WM_PID# =~ s/[^\d]+//gr ~~ \@fprocesses  and qx|xprop -id $winid _NET_WM_STATE| =~  /_NET_WM_STATE_FULLSCREEN/ ) or qx!xprop -id $winid _NET_WM_PID! =~ s/[^\d]+//gr ~~ \@processes )
             {
                 FSProj::Utils::FSDebug(
-                    "We've got videoplayer in fullscreen mode!\n");
+                    "We've got videoplayer that we track\n");
                 if ($ScrSvr) {
                     FSProj::Utils::FSDebug(
                         "Simulating user activity: " . $ScrSvr . "\n" );
@@ -93,15 +94,14 @@ sub ProjLoop {
                         warn $@;
                     }
                 }
+                FSProj::Utils::FSDebug("Disabling DPMS\n");
                 system $OFF;
             }
             else {
                 system $ON if $DPMSstate;
             }
-            sleep $settings{timeout};
+            sleep $settings->{timeout};
         }
-        undef @processes;
-        undef $winid;
     }
     threads->detach;
     threads->exit;
@@ -113,15 +113,12 @@ sub XWinID {
     while (<XPROP>) {
         FSProj::Utils::FSDebug($_);
         {
-            my $winid = s/.*?\# (.*)/$1/r;
-            chomp $winid;
+            chomp( my $winid = s/.*?\# (.*)/$1/gr );
             lock $main::WinID;
             $main::WinID = $winid if $winid and $winid_p ne $winid;
             $winid_p = $winid;
-            undef $winid;
         }
     }
-    undef $winid_p;
     close XPROP;
     threads->detach;
     threads->exit;
@@ -131,21 +128,17 @@ sub XWinID {
 package FSProj::Utils;
 
 sub FSDebug {
-    print shift if $DEBUG;
+    print shift."\n" if $DEBUG;
 }
 
 sub regexp2array {
     my ( $inp_reg, $retval ) = @_;
     @$retval = split( /\|/, $$inp_reg =~ s/[\(\)\:\^\?]//gr );
-    undef $retval;
-    undef $inp_reg;
 }
 
 sub array2regexp {
     my ( $ref_arr, $ret_val ) = @_;
     $$ret_val = "(?^:(" . join( ')|(', @$ref_arr ) . "))";
-    undef $ret_val;
-    undef $ref_arr;
 }
 
 sub processlist {
@@ -156,9 +149,6 @@ sub processlist {
             push @$retval, $_->pid;
         }
     }
-    undef $_;
-    undef $cmndline;
-    undef $retval;
 }
 
 sub daemonize {
@@ -171,47 +161,49 @@ sub daemonize {
     die "Can't fork: $!" unless defined( my $pid = fork );
     exit if $pid;
     die "Can't start a new session: $!" unless &POSIX::setsid();
-    undef $pid;
 }
 
 1;
 
 package FSProj::Config;
-my $conffile = eval("require File::HomeDir;  File::HomeDir::my_home();")
-  . "/.config/FullscreenProj.pl/fsproj.conf";
+
+sub conffile {
+    return
+      eval("require File::HomeDir;  File::HomeDir::my_home();")
+      . "/.config/FullscreenProj.pl/fsproj.conf";
+}
 
 sub readconf {
+    my $config = &conffile;
     require File::Copy;
-    if ( -e $conffile ) {
-        open CONFIG, $conffile;
+    if ( -e $config ) {
+        open CONFIG, $config;
         while (<CONFIG>) {
             chomp;
             next if s/^(#.*|\s*)$//;
             my ( $var, $value ) = split( /\s*=\s*/, $_, 2 );
-            $settings{$var} = $value;
-            undef $var;
-            undef $value;
+            $settings->{$var} = $value;
         }
         close CONFIG;
     }
     else {
-        mkdir $conffile =~ s/fsproj.conf//r;
+        mkdir $config =~ s/fsproj.conf//gr;
         &File::Copy::cp(
             (
                 ( eval { require Cwd; &Cwd::abs_path($0); } ) =~
-                  s/(.*)\/.*\/.*/$1/r
+                  s/(.*)\/.*\/.*/$1/gr
             )
             . "/share/doc/fullscreenprojpl/fsproj.conf",
-            $conffile
+            $config
         );
         &FSProj::Config::readconf;
     }
 }
 
 sub writeconf {
-    open CONFIG, ">", $conffile;
-    foreach ( keys %settings ) {
-        print CONFIG $_ . " = " . $settings{$_} . "\n";
+    open CONFIG, ">", &conffile;
+    foreach ( keys %$settings ) {
+        print CONFIG $_ . " = " . $settings->{$_} . "\n";
     }
     close CONFIG;
 }
@@ -220,41 +212,43 @@ sub FSProcHandle {
     my ( $aproc, $dproc, $retval ) = @_;
     my %unproc   = ();
     my @currproc = ();
-    &FSProj::Utils::regexp2array( \$settings{regex}, \@currproc );
+    &FSProj::Utils::regexp2array( $retval, \@currproc );
     foreach ( @currproc, @$aproc ) {
         $unproc{$_} = 1;
     }
     delete $unproc{$_} foreach (@$dproc);
     @$aproc = sort keys %unproc;
-    undef %unproc;
-    undef $dproc;
     &FSProj::Utils::array2regexp( $aproc, $retval );
-    undef $retval;
-    undef $aproc;
 }
 
 sub FSPlist {
-    print "We are currently tracking such processes:\n";
+    local $\="\n";    
+    print "We are currently tracking such processes:";
     {
         my @proc;
-        &FSProj::Utils::regexp2array( \$settings{regex}, \@proc );
-        local $, = "\n\t";
-        print "\t";
-        print @proc;
-        print "\n";
+        &FSProj::Utils::regexp2array( \$settings->{fregex}, \@proc );
+        
+        foreach (@proc){
+        local $\=undef;
+        local $\="\n" if m/$settings->{regex}/;;    
+        print "fullscreen only -> " unless m/$settings->{regex}/;
+        local $\="\n";
+        print;
+     }
     }
     exit;
 }
 
 sub ARGVparse {
-    use Getopt::Long;
-    use Pod::Usage;
+    require Getopt::Long;
+    require Pod::Usage;
 
     &FSProj::Config::readconf();
     my %tempsets;
     my $action;
-    my @dprocs = qw/start status restart stop/;
-    my @aprocs;
+    my (@dprocs, @dfprocs) = qw/start status restart stop/;
+    @dfprocs = @dprocs;
+    my (@aprocs, @afprocs);
 
 =head1 SYNOPSIS
 
@@ -266,21 +260,23 @@ B<start stop restart status>
 
 Options:
 
-B<[--help|-h] [--no-gui] [--gui|-g] [--fullscreen|-f] [--no-fullscreen] [--timeout|-t seconds] [--process-list|-p] [--add-proc process1 process2 process3 ...] [--del-proc process1 process2 process3 ...] [--version|-v] [--debug]>
+B<[--help|-h] [--no-gui|-nog] [--gui|-g] [--fullscreen|-f] [--no-fullscreen|-nof] [--timeout|-t seconds] [--process-list|-p] [--add-proc|-a process1 process2 process3 ...] [--rm-proc|-r process1 process2 process3 ...] [--afdd-proc|-af process ...] [--rfm-proc|-rf process ...] [--version|-v] [--debug|-d]>
 
 Use --help for more information.
 
 =cut
 
-    GetOptions(
+    Getopt::Long::GetOptions(
         \%tempsets,
         'timeout=i',
         'gui!',
         'fullscreen!',
         'add-proc=s{,}' => \@aprocs,
-        'del-proc=s{,}' => \@dprocs,
+        'rm-proc=s{,}'  => \@dprocs,
+         'afdd-proc=s{,}' => \@afprocs,
+        'rfm-proc=s{,}'  => \@dfprocs,
         'help'          => sub {
-            &Pod::Usage::pod2usage(
+           &Pod::Usage::pod2usage(
                 -verbose  => 99,
                 -sections => "NAME|SYNOPSIS|OPTIONS|ARGUMENTS"
             );
@@ -292,10 +288,21 @@ Use --help for more information.
             use warnings;
             use diagnostics;
         },
-        'version' =>
-          sub { print "FullScreenProj.pl version: " . $VERSION . "\n"; exit; },
+        'version' => sub {
+            print "FullScreenProj.pl version: " . $VERSION . "\n";
+            exit;
+        },
 
     );
+    foreach ( keys %tempsets ) {
+        $settings->{$_} = $tempsets{$_};
+    }
+    &FSProj::Config::FSProcHandle( \@aprocs, \@dprocs, \$settings->{regex} )
+      if @aprocs
+          or @dprocs;
+    &FSProj::Config::FSProcHandle( \@afprocs, \@dfprocs, \$settings->{fregex} )
+      if @afprocs
+          or @dfprocs;
     my @thisproc = ();
     &FSProj::Utils::processlist( qr/perl.*fsproj/, \@thisproc );
     given (@ARGV) {
@@ -327,9 +334,7 @@ Use --help for more information.
                     }
                 }
             }
-            undef $pid;
         }
-
     }
     else {
         given ($action) {
@@ -340,18 +345,7 @@ Use --help for more information.
             }
         }
     }
-    foreach ( keys %tempsets ) {
-        $settings{$_} = $tempsets{$_};
-    }
-    undef %tempsets;
-    &FSProj::Config::FSProcHandle( \@aprocs, \@dprocs, \$settings{regex} )
-      if @aprocs
-          or @dprocs;
-    undef @aprocs;
-    undef @dprocs;
     &FSProj::Config::writeconf() unless $action eq "stop";
-    undef $action;
-    undef @ARGV;
 }
 
 1;
@@ -368,84 +362,108 @@ sub new {
     $title  = ""                unless defined $title;
     $pos    = wxDefaultPosition unless defined $pos;
     my @processes;
-    &FSProj::Utils::regexp2array( \$settings{regex}, \@processes );
-    my $height = 340;
-    $size = [ 220, $height ];
+    &FSProj::Utils::regexp2array( \$settings->{fregex}, \@processes );
+    $size = [ 420, 265 ];
     $name = "" unless defined $name;
     $style = wxDEFAULT_DIALOG_STYLE;
     $self =
       $self->SUPER::new( $parent, $id, $title, $pos, $size, $style, $name );
     $self->{fsfs} =
-      Wx::CheckBox->new( $self, -1, "Only fullscreen apps", [ 27, 6 ], );
-    $self->{fsfs}->SetValue( $settings{fullscreen} );
-     $self->{fsgui} =
-      Wx::CheckBox->new( $self, -1, "Use WxWidgets GUI", [ 27, 36 ], );
-    $self->{fsgui}->SetValue( $settings{gui} );
+      Wx::CheckBox->new( $self, -1, "Only fullscreen apps", [ 27, 110 ], );
+    $self->{fsfs}->SetValue( $settings->{fullscreen} );
+    $self->{fsgui} =
+      Wx::CheckBox->new( $self, -1, "Use WxWidgets GUI.", [ 27, 140 ], );
+    $self->{fsgui}->SetValue( $settings->{gui} );
+    $self->{fsgui}->Connect(
+        -1, -1,
+        &Wx::wxEVT_COMMAND_CHECKBOX_CLICKED,
+        sub {
+            Wx::MessageBox('This change will take effect after restart') unless $self->{fsgui}->GetValue;
+        }
+    );
     $self->{tmlabel} =
-      Wx::StaticText->new( $self, -1, "Timeout in seconds", [ 76, 66 ], );
+      Wx::StaticText->new( $self, -1, "Timeout in seconds", [ 76, 183 ], );
     $self->{timeout} = Wx::SpinCtrl->new(
         $self, -1, "",
-        [ 10, 66 ],
+        [ 10, 181 ],
         [ 55, 20 ],
-        wxSP_ARROW_KEYS, 0, 100, $settings{timeout}
+        wxSP_ARROW_KEYS, 1, 100, $settings->{timeout}
     );
-    $self->{fsprlistview} = Wx::ListView->new(
+    $self->{fsprchecklist} = Wx::CheckListBox->new(
         $self, -1,
-        [ 10,  90 ],
-        [ 200, $height - 180 ],
-        wxLC_REPORT | wxLC_SINGLE_SEL
+        [ 210, 0 ],
+        [ 200, 160 ],
     );
-    $self->{fsprlistview}
-      ->InsertColumn( 0, "Existing process list", wxLIST_FORMAT_LEFT, 200 );
-    my $count = 0;
-
-    foreach (@processes) {
-        $count++;
-        $self->{fsprlistview}->InsertStringItem( $count, $_ );
-    }
-    $self->{btn_add} =
-      Wx::Button->new( $self, wxID_ADD, "", [ 17, $height - 80 ] );
+    foreach (0..$#processes) {
+       my $fsonly= ($processes[$_] !~m/$settings->{regex}/);
+       $self->{fsprchecklist}->Append([$processes[$_]]);
+       $self->{fsprchecklist}->Check ($_,$fsonly);
+    } 
+     $self->{btn_add} = Wx::Button->new( $self, wxID_ADD, "", [ 217, 170 ] );
 
     $self->{btn_add}->Connect(
         -1, -1,
         &Wx::wxEVT_COMMAND_BUTTON_CLICKED,
         sub {
-            my $dialog = Wx::TextEntryDialog->new(
+            my $result = Wx::MessageDialog->new(
                 $self,
-                "Enter process name",
-                "Add process dialog", ""
-            );
+                "Do you want to add process manually?",
+                "Method Selection dialog",
+                wxYES_NO | wxICON_QUESTION
+            )->ShowModal;
+            if ( $result == wxID_YES ) {
+                my $manualdialog = Wx::TextEntryDialog->new(
+                    $self,
+                    "Enter process name",
+                    "Add process dialog",
+                    "", wxCENTRE | wxOK | wxCANCEL
+                );
 
-            if ( $dialog->ShowModal == wxID_OK ) {
-                $self->{fsprlistview}
-                  ->InsertStringItem( $count++, $dialog->GetValue );
-
+               if ( $manualdialog->ShowModal == wxID_OK ) {
+                   $self->{fsprchecklist}->Append([$manualdialog->GetValue]);
+                }
             }
-          }
-
-    );
-
-    $self->{btn_del} =
-      Wx::Button->new( $self, wxID_DELETE, "", [ 119, $height - 80 ] );
-    $self->{btn_del}->Connect(
-        -1, -1,
-        &Wx::wxEVT_COMMAND_BUTTON_CLICKED,
-        sub {
-            my $item = $self->{fsprlistview}->GetFocusedItem;
-            if ( $self->{fsprlistview}->IsSelected($item) ) {
-                $self->{fsprlistview}->DeleteItem($item);
-                $count--;
+           if ( $result == wxID_NO ) {
+            my $pd =
+              Wx::ProgressDialog->new( '', '', 5, $self,
+                wxPD_APP_MODAL | wxPD_AUTO_HIDE | wxPD_SMOOTH );
+                foreach ( 1 .. 5 ) {
+                    $pd->Update($_);
+                    sleep 1;
+                }
+                chomp( my $pid = qx@xprop _NET_WM_PID@ =~ s/[^\d+]//gr );
+                require Proc::ProcessTable;
+                foreach ( reverse @{ 'Proc::ProcessTable'->new->table } ) {
+                    if ( $_->pid == $pid ) {
+                        my $manualdialog = Wx::TextEntryDialog->new(
+                            $self,
+                            "Enter process name",
+                            "Add process dialog",
+                            $_->cmndline, wxCENTRE | wxOK | wxCANCEL
+                        );
+                        if ( $manualdialog->ShowModal == wxID_OK ) {
+                           $self->{fsprchecklist}->Append([$manualdialog->GetValue]);
+                        }
+                        last;
+                    }
+                }
             }
         }
     );
 
-    $self->{btn_Ok} =
-      Wx::Button->new( $self, wxID_OK, "", [ 17, $height - 40 ] );
+    $self->{btn_del} = Wx::Button->new( $self, wxID_DELETE, "", [ 319, 170 ] );
+    $self->{btn_del}->Connect(
+        -1, -1,
+        &Wx::wxEVT_COMMAND_BUTTON_CLICKED,
+        sub {
+            $self->{fsprchecklist}->Delete($self->{fsprchecklist}->GetSelection);
+        }
+    );
+
+    $self->{btn_Ok} = Wx::Button->new( $self, wxID_OK, "", [ 132, 220 ] );
     $self->{btn_Cancel} =
-      Wx::Button->new( $self, wxID_CANCEL, "", [ 119, $height - 40 ] );
+      Wx::Button->new( $self, wxID_CANCEL, "", [ 234, 220 ] );
     $self->SetTitle("Settings");
-    undef $height;
-    undef @processes;
     return $self;
 }
 
@@ -458,6 +476,8 @@ use base 'Wx::App';
 
 sub OnInit {
     my $self = shift;
+    threads->create( \&FSProj::Logic::XWinID )->detach;
+    threads->create( \&FSProj::Logic::ProjLoop )->detach;
     $self->{stdlg}   = FSProj::SettingsDialog->new();
     $self->{tbi}     = Wx::TaskBarIcon->new();
     $self->{popmenu} = Wx::Menu->new();
@@ -465,7 +485,7 @@ sub OnInit {
         Wx::Icon->new(
             (
                 ( eval { require Cwd; &Cwd::abs_path($0); } ) =~
-                  s/(.*)\/.*\/.*/$1/r
+                  s/(.*)\/.*\/.*/$1/gr
             )
             . "/share/icons/fsproj/Disabled.xpm",
             &Wx::wxBITMAP_TYPE_XPM
@@ -514,9 +534,7 @@ sub MenuGen {
                 '©2012, Igor Gritsenko <xenomorph@mail.univ.kiev.ua>');
             $abdialog->SetWebSite( "http://github/drone-pl/FullScreenProj.pl",
                 "GitHub Repository" );
-            $abdialog->SetDevelopers(
-                [ 'Igor Gritsenko aka Xenomorph', 'Dmitry "DarkneSS" Perlow' ]
-            );
+            $abdialog->SetDevelopers( [ 'Igor Gritsenko', 'Dmitry Perlow' ] );
             Wx::AboutBox($abdialog);
         }
     );
@@ -527,21 +545,24 @@ sub MenuGen {
         &Wx::wxEVT_COMMAND_MENU_SELECTED,
         sub {
             if ( $this->{stdlg}->ShowModal == &Wx::wxID_OK ) {
-                $settings{timeout} = $this->{stdlg}->{timeout}->GetValue;
-                $settings{gui}     = $this->{stdlg}->{fsgui}->GetValue;
-                $settings{fullscreen}     = $this->{stdlg}->{fsfs}->GetValue;
+                $settings->{timeout}    = $this->{stdlg}->{timeout}->GetValue;
+                $settings->{gui}        = $this->{stdlg}->{fsgui}->GetValue;
+                $settings->{fullscreen} = $this->{stdlg}->{fsfs}->GetValue;
                 my @list = ();
+                my @flist = ();
                 for (
                     my $i = 0 ;
-                    $i < $this->{stdlg}->{fsprlistview}->GetItemCount ;
+                    $i < $this->{stdlg}->{fsprchecklist}->GetCount ;
                     $i++
                   )
                 {
-                    push @list,
-                      $this->{stdlg}->{fsprlistview}->GetItem($i)->GetText;
+                    push @flist,
+                      $this->{stdlg}->{fsprchecklist}->GetString($i);
+                     push @list, $this->{stdlg}->{fsprchecklist}->GetString($i) unless $this->{stdlg}->{fsprchecklist}->IsChecked($i);
                 }
 
-                &FSProj::Utils::array2regexp( \@list, \$settings{regex} );
+                &FSProj::Utils::array2regexp( \@list, \$settings->{regex} );
+                &FSProj::Utils::array2regexp( \@flist, \$settings->{fregex} );
                 &FSProj::Config::writeconf();
             }
 
@@ -557,41 +578,37 @@ sub ActionHandle {
     my ( $signal, $pid ) = @_;
     FSProj::Utils::FSDebug( $signal . " fsproj PID:" . $pid . "\n" );
     kill $signal => -$pid;
-    undef $signal;
-    undef $pid;
 }
 
 sub RunMainLoop {
 
     &FSProj::Utils::daemonize unless $DEBUG;
-    my $winid_thr = threads->create( \&FSProj::Logic::XWinID );
-    my $ploop_thr = threads->create( \&FSProj::Logic::ProjLoop );
     if (shift) {
-        $winid_thr->detach;
-        $ploop_thr->detach;
-         my $app = FSProj::GUI->new;
-        $app->MainLoop;
-        undef $app;
+        $main::app = FSProj::GUI->new;
+        $main::app->MainLoop;
+        return;
     }
     else {
-        $winid_thr->detach;
-        $ploop_thr->join;
+        threads->create( \&FSProj::Logic::XWinID )->detach;
+        threads->create( \&FSProj::Logic::ProjLoop )->join;
     }
 }
-
 1;
+
+my $app;
 
 if (@ARGV) {
     &FSProj::Config::ARGVparse();
 }
 else {
+    require Pod::Usage;
     &Pod::Usage::pod2usage(
         -verbose  => 99,
         -sections => "NAME|SYNOPSIS"
     );
 }
-&FSProj::Main::RunMainLoop( $settings{gui} );
-&FSProj::Main::ActionHandle( 'TERM', $$ );
+&FSProj::Main::RunMainLoop( $settings->{gui} );
+&FSProj::Main::ActionHandle( 'KILL', $$ );
 
 __END__
 
@@ -681,9 +698,23 @@ Add process for tracking. There could be more than one process.
 
 =over 8
 
-=item B<--del-proc process>
+=item B<--rm-proc process>
 
 Delete process from tracking. There could be more than one process.
+
+=back
+
+=item B<--afdd-proc process>
+
+Add process for fullscreen tracking only. There could be more than one process.
+
+=back
+
+=over 8
+
+=item B<--rfm-proc process>
+
+Delete process from fullscreen only tracking. There could be more than one process.
 
 =back
 
@@ -766,7 +797,7 @@ Starts the utility with changed timeout and saves this timeout to config.
 
 =over 8
 
-=item C<fsproj --add-proc totem --del-proc mplayer vlc restart>
+=item C<fsproj --add-proc totem --rm-proc mplayer vlc restart>
 
 Restarts the utility, removing mplayer and vlc from tracking list and adding totem to it. All changes are saved to config. 
 
