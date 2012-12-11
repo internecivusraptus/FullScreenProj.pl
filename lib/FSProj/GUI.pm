@@ -219,6 +219,7 @@ sub MenuGen {
         -1,
         &Wx::wxEVT_COMMAND_MENU_SELECTED,
         sub {
+            &FSProj::Utils::ActionHandle( 'KILL', $$ );
             &Wx::wxExit;
         }
 

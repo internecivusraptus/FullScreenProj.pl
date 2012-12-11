@@ -46,14 +46,13 @@ if ( $settings->{gui} ) {
     require FSProj::GUI;
     $main::app = FSProj::GUI::App->new;
     $main::app->MainLoop;
-    &FSProj::Utils::ActionHandle( 'KILL', $$ );
 }
 else {
     require FSProj::Logic;
     threads->create( \&FSProj::Logic::XWinID )->detach;
     threads->create( \&FSProj::Logic::ProjLoop, \$settings )->join;
 }
-
+&FSProj::Utils::ActionHandle( 'KILL', $$ );
 __END__
 
 =pod
