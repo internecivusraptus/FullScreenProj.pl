@@ -74,7 +74,10 @@ sub doLayout {
     $self->{frame}->Fit($self);
     $self->Layout();
 }
-
+sub SetValue {
+    my $this = shift;
+    $this->{txt_prname}->SetValue(shift);
+}
 1;
 
 package FSProj::GUI::SettingsDialog;
@@ -115,18 +118,19 @@ sub new {
     );
     $self->{fsprchecklist} =
       Wx::CheckListBox->new( $self, -1, [ 210, 0 ], [ 200, 160 ], );
-    $self->{btn_add} = Wx::Button->new( $self, wxID_ADD, "", [ 217, 170 ] );
+    $self->{adddialog} = FSProj::GUI::AddProcessDialog->new($self);
 
+    $self->{btn_add} = Wx::Button->new( $self, wxID_ADD, "", [ 217, 170 ] );
+    
     $self->{btn_add}->Connect(
         -1, -1,
         &Wx::wxEVT_COMMAND_BUTTON_CLICKED,
         sub {
-            my $manualdialog = FSProj::GUI::AddProcessDialog->new($self);
-
-            if ( $manualdialog->ShowModal == wxID_OK ) {
-                $self->{fsprchecklist}->Append( [ $manualdialog->GetValue ] )
+            $self->{adddialog}->SetValue("");
+            if ( $self->{adddialog}->ShowModal == wxID_OK ) {
+                 $self->{fsprchecklist}->Append( [ $self->{adddialog}->GetValue ] )
                   unless ( $self->{fsprchecklist}
-                    ->FindString( $manualdialog->GetValue ) > -1 );
+                    ->FindString( $self->{adddialog}->GetValue ) > -1 );
             }
         }
     );
@@ -178,7 +182,7 @@ sub OnInit {
     require FSProj::Config;
     $self->{settings} = pop @ARGV;
     threads->create( \&FSProj::Logic::XWinID )->detach;
-    threads->create( \&FSProj::Logic::ProjLoop, \$self->{settings} )->detach;
+    threads->create( \&FSProj::Logic::ProjLoop, $self->{settings} )->detach;
     $self->{stdlg}    = FSProj::GUI::SettingsDialog->new();
     $self->{stdlg}->ContentGenerator( $self->{settings} );
     $self->{tbi}     = Wx::TaskBarIcon->new();
@@ -215,8 +219,9 @@ sub MenuGen {
         -1,
         &Wx::wxEVT_COMMAND_MENU_SELECTED,
         sub {
-            $this->ExitMainLoop();
+            &Wx::wxExit;
         }
+
     );
     $this->{popmenu}->Connect(
         &Wx::wxID_ABOUT,
