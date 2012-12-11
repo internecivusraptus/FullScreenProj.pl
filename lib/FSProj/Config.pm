@@ -11,7 +11,7 @@ sub Init {
 
 sub conffile {
     return
-      eval("require File::HomeDir;  File::HomeDir::my_home();")
+      eval{require File::HomeDir;  File::HomeDir::my_home();}
       . "/.config/FullscreenProj.pl/fsproj.conf";
 }
 
