@@ -7,7 +7,8 @@ sub regexp2array {
 
 sub array2regexp {
     my ( $ref_arr, $ret_val ) = @_;
-    $$ret_val = "(?^:(" . join( ')|(', @$ref_arr ) . "))";
+    $$ret_val="";
+    $$ret_val = "(?^:(" . join( ')|(', @$ref_arr ) . "))" if @$ref_arr;
 }
 
 sub processlist {
